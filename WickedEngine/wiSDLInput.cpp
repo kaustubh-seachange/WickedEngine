@@ -38,13 +38,14 @@ namespace wi::input::sdlinput
         }
     }
 
-    void ProcessEvent(SDL_Event &event){
+    void ProcessEvent(const SDL_Event &event){
         events.push_back(event);
     }
 
     void Update()
     {
         mouse.delta_wheel = 0; // Do not accumulate mouse wheel motion delta
+        mouse.delta_position = XMFLOAT2(0, 0); // Do not accumulate mouse position delta
 
         for(auto& event : events){
             switch(event.type){
@@ -75,8 +76,8 @@ namespace wi::input::sdlinput
                 case SDL_MOUSEMOTION:          // Mouse moved
                     mouse.position.x = event.motion.x;
                     mouse.position.y = event.motion.y;
-                    mouse.delta_position.x = event.motion.xrel;
-                    mouse.delta_position.y = event.motion.yrel;
+                    mouse.delta_position.x += event.motion.xrel;
+                    mouse.delta_position.y += event.motion.yrel;
                     break;
                 case SDL_MOUSEBUTTONDOWN:      // Mouse button pressed
                     switch(event.button.button){
@@ -132,7 +133,8 @@ namespace wi::input::sdlinput
                     auto controller_get = controller_mapped.find(event.caxis.which);
                     if(controller_get != controller_mapped.end()){
                         float raw = event.caxis.value / 32767.0f;
-                        float deadzoned = (raw < -0.01 || raw > 0.01) ? raw : 0;
+                        const float deadzone = 0.2;
+                        float deadzoned = (raw < -deadzone || raw > deadzone) ? raw : 0;
                         switch(event.caxis.axis){
                             case SDL_CONTROLLER_AXIS_LEFTX:
                                 controllers[controller_get->second].state.thumbstick_L.x = deadzoned;
@@ -222,7 +224,7 @@ namespace wi::input::sdlinput
         //Update rumble every call
         for(auto& controller : controllers){
             SDL_GameControllerRumble(
-                controller.controller, 
+                controller.controller,
                 controller.rumble_l,
                 controller.rumble_r,
                 60); //Buffer at 60ms
@@ -273,6 +275,38 @@ namespace wi::input::sdlinput
                 return wi::input::KEYBOARD_BUTTON_PAGEDOWN;
             case SDL_SCANCODE_PAGEUP:
                 return wi::input::KEYBOARD_BUTTON_PAGEUP;
+			case SDL_SCANCODE_KP_0:
+				return wi::input::KEYBOARD_BUTTON_NUMPAD0;
+			case SDL_SCANCODE_KP_1:
+				return wi::input::KEYBOARD_BUTTON_NUMPAD1;
+			case SDL_SCANCODE_KP_2:
+				return wi::input::KEYBOARD_BUTTON_NUMPAD2;
+			case SDL_SCANCODE_KP_3:
+				return wi::input::KEYBOARD_BUTTON_NUMPAD3;
+			case SDL_SCANCODE_KP_4:
+				return wi::input::KEYBOARD_BUTTON_NUMPAD4;
+			case SDL_SCANCODE_KP_5:
+				return wi::input::KEYBOARD_BUTTON_NUMPAD5;
+			case SDL_SCANCODE_KP_6:
+				return wi::input::KEYBOARD_BUTTON_NUMPAD6;
+			case SDL_SCANCODE_KP_7:
+				return wi::input::KEYBOARD_BUTTON_NUMPAD7;
+			case SDL_SCANCODE_KP_8:
+				return wi::input::KEYBOARD_BUTTON_NUMPAD8;
+			case SDL_SCANCODE_KP_9:
+				return wi::input::KEYBOARD_BUTTON_NUMPAD9;
+			case SDL_SCANCODE_KP_MULTIPLY:
+				return wi::input::KEYBOARD_BUTTON_MULTIPLY;
+			case SDL_SCANCODE_KP_PLUS:
+				return wi::input::KEYBOARD_BUTTON_ADD;
+			case SDL_SCANCODE_SEPARATOR:
+				return wi::input::KEYBOARD_BUTTON_SEPARATOR;
+			case SDL_SCANCODE_KP_MINUS:
+				return wi::input::KEYBOARD_BUTTON_SUBTRACT;
+			case SDL_SCANCODE_KP_DECIMAL:
+				return wi::input::KEYBOARD_BUTTON_DECIMAL;
+			case SDL_SCANCODE_KP_DIVIDE:
+				return wi::input::KEYBOARD_BUTTON_DIVIDE;
         }
 
 
@@ -283,7 +317,7 @@ namespace wi::input::sdlinput
         }
 
         return -1;
-        
+
     }
 
     void controller_to_wicked(uint32_t *current, Uint8 button, bool pressed){
@@ -343,9 +377,9 @@ namespace wi::input::sdlinput
         if(index < controllers.size()){
 #ifdef SDL2_FEATURE_CONTROLLER_LED
             SDL_GameControllerSetLED(
-                controllers[index].controller, 
-                data.led_color.getR(), 
-                data.led_color.getG(), 
+                controllers[index].controller,
+                data.led_color.getR(),
+                data.led_color.getG(),
                 data.led_color.getB());
 #endif
             controllers[index].rumble_l = (Uint16)floor(data.vibration_left * 0xFFFF);

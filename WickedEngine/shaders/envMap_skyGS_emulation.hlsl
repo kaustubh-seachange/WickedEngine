@@ -1,17 +1,18 @@
+#include "globals.hlsli"
 // This geometry shader is intended as fallback support when GPU doesn't support writing to 
 //	SV_RenderTargetArrayIndex from Vertex Shader stage
 
 struct GSInput
 {
 	float4 pos : SV_POSITION;
-	float3 nor : NORMAL;
+	min16float3 nor : NORMAL;
 	uint RTIndex : RTINDEX;
 };
 
 struct GSOutput
 {
 	float4 pos : SV_POSITION;
-	float3 nor : NORMAL;
+	min16float3 nor : NORMAL;
 	uint RTIndex : SV_RenderTargetArrayIndex;
 };
 

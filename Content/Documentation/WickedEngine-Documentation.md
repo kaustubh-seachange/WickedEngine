@@ -69,12 +69,12 @@ This is a reference for the C++ features of Wicked Engine
 			15. [RayTracingAccelerationStructure](#raytracingaccelerationstructure)
 			16. [RayTracingPipelineState](#raytracingpipelinestate)
 			17. [Variable Rate Shading](#variable-rate-shading)
-		2. [GraphicsDevice_DX11](#wigraphicsdevice_dx11)
-		3. [GraphicsDevice_DX12](#wigraphicsdevice_dx12)
-		4. [GraphicsDevice_Vulkan](#wigraphicsdevice_vulkan)
+			17. [Video decoding](#video-decoding)
+		2. [GraphicsDevice_DX11](#graphicsdevice_dx11)
+		3. [GraphicsDevice_DX12](#graphicsdevice_dx12)
+		4. [GraphicsDevice_Vulkan](#graphicsdevice_vulkan)
 	2. [Renderer](#renderer)
 		1. [DrawScene](#drawscene)
-		2. [DrawScene_Transparent](#drawscene_transparent)
 		3. [Tessellation](#tessellation)
 		4. [Occlusion Culling](#occlusion-culling)
 		5. [Shadow Maps](#shadow-maps)
@@ -404,11 +404,7 @@ Initializes all engine systems either in a blocking or an asynchronous way.
 
 ### Platform
 [[Header]](../../WickedEngine/wiPlatform.h)
-You can get native platform specific handles here, such as window handle.
-- GetWindow <br/>
-Returns the platform specific window handle
-- IsWindowActive <br/>
-Returns true if the current window is the topmost one, false if it is not in focus
+You can get native platform specific functionality.
 
 ### Event Handler
 [[Header]](../../WickedEngine/wiEventHandler.h)
@@ -607,25 +603,31 @@ Shaders still need to be created with `GraphicsDevice::CreateShader()` in a simi
 
 Depending on the graphics device implementation, the shader code must be different format. For example, DirectX expects DXIL shaders, Vulkan expects SPIR-V shaders. The engine can compile HLSL shader source code to DXIL or SPIRV format with the [Shader Compiler](#shader-compiler).
 
-##### Render Passes
-Render passes are defining regions in GPU execution where a number of render targets or depth buffers will be used to render into them. Render targets and depth buffers are defined as `RenderPassAttachment`s. The `RenderPassAttachment`s have a pointer to the texture, state the resource type (`RENDERTARGET`, `DEPTH_STENCIL` or `RESOLVE`), state the [subresource](#subresources) index, the load and store operations, and the layout transitions for the textures.
+Note: As an optional paramter, `CreatePipelineState()` function also accepts a `RenderPassInfo` pointer. If this is provided, then all the information will be available for pipeline creation to happen immediately. This means the pipeline will be immediately in final usable state after the function returns, but it can take longer time for this to complete. If the parameter is not provided, the pipeline could be created at a later time, when the render pass information is available on first use. This can have the effect of the longer pipeline compilation happening at an unexpected time. But in this case, the pipeline will also be compatible with more render pass types if it's used at different places.
 
-- `RENDERTARGET`: The attachment will be used as a (color) render target. The order of these attachments define the shader color output order.
-- `DEPTH_STENCIL`: The attachment will be used as a depth (and/or stencil) buffer.
-- `RESOLVE`: The attachment will be used as MSAA resolve destination. The resolve source is chosen among the `RENDERTARGET` attachments in the same render pass, in the order they were declared in. The declaration order of the `RENDERTARGET` and `RESOLVE` attachment must match to correctly deduce source and destination targets for resolve operations.
+##### Render Passes
+Render passes are defining regions in GPU execution where a number of render targets or depth buffers will be used to render into them. Render targets and depth buffers are defined as `RenderPassImage`s. The `RenderPassImage`s have a pointer to the texture, state the resource type (`RENDERTARGET`, `DEPTH_STENCIL` or `RESOLVE`), state the [subresource](#subresources) index, the load and store operations, and the layout transitions for the textures.
+
+- `RENDERTARGET`: The image will be used as a (color) render target. The order of these images define the shader color output order.
+- `DEPTH_STENCIL`: The image will be used as a depth (and/or stencil) buffer.
+- `RESOLVE`: The image will be used as MSAA resolve destination. The resolve source is chosen among the `RENDERTARGET` images in the same render pass, in the order they were declared in. The declaration order of the `RENDERTARGET` and `RESOLVE` images must match to correctly deduce source and destination targets for resolve operations.
+- `RESOLVE_DEPTH` same as `RESOLVE` but for depth stencil. You can also specify Min or Max resolve operation with the `RenderPassImage::DepthResolveMode` enum. This feature must be supported by GPU and indicated by `GraphicsDeviceCapability::DEPTH_RESOLVE_MIN_MAX` and `GraphicsDeviceCapability::STENCIL_RESOLVE_MIN_MAX` (if image also has stencil)
 
 - Load Operation: <br/>
 Defines how the texture contents are initialized at the start of the render pass. `LoadOp::LOAD` says that the previous texture content will be retained. `LoadOp::CLEAR` says that the previous contents of the texture will be lost and instead the texture clear color will be used to fill the texture. `LoadOp::DONTCARE` says that the texture contents are undefined, so this should only be used when the developer can ensure that the whole texture will be rendered to and not leaving any region empty (in which case, undefined results will be present in the texture).
 - Store operation: <br/>
 Defines how the texture contents are handled after the render pass ends. `StoreOp::STORE` means that the contents will be preserved. `StoreOp::DONTCARE` means that the contents won't be necessarily preserved, they are only temporarily valid within the duration of the render pass, which can save some memory bandwidth on some platforms (specifically tile based rendering architectures, like mobile GPUs).
 - Layout transition: <br/>
-Define the `intial_layout`, `subpass_layout` (only for `RENDERTARGET` or `DEPTH_STENCIL`) and `final_layout` members to have an implicit transition performed as part of the render pass, that works like an [IMAGE_BARRIER](#gpu-barriers), but can be more optimal. The `initial_layout` states the starting state of the resource. The resource will be transitioned from `initial_layout` to `subpass_layout` within the render pass. The `subpass_layout` states how the resource is accessed within the render pass. For `RENDERTARGET`, this must be `RENDERTARGET`, for `DEPTH_STENCIL` type, it must be either `DEPTHSTENCIL` or `DEPTHSTENCIL_READONLY`. For `RESOLVE` type, the subpass_layout have no meaning, it is implicitly defined. At the end of the render pass, the resources will be transitioned from `subpass_layout` to `final_layout`.
+Define the `layout_before`, `layout` (only for `DEPTH_STENCIL`) and `layout_after` members to have an implicit transition performed as part of the render pass, that works like an [IMAGE_BARRIER](#gpu-barriers), but can be more optimal. The `layout_before` states the starting state of the resource. The resource will be transitioned from `layout_before` to `layout` within the render pass. The `layout` states how the resource is accessed within the render pass. For `DEPTH_STENCIL` type, it must be either `DEPTHSTENCIL` or `DEPTHSTENCIL_READONLY`. For `RESOLVE` type, the subpass_layout have no meaning, it is implicitly defined. At the end of the render pass, the resources will be transitioned from `layout` to `layout_after`.
 
 Notes:
 - When `RenderPassBegin()` is called, `RenderPassEnd()` must be called after on the same command list before the command list gets [submitted](#work-submission).
-- It is not allowed to call `CopyResource()`, `CopyTexture2D()`, etc. inside a render pass.
-- It is not allowed to call `Dispatch()` and `DispatchIndirect()` inside a render pass.
+- It is not allowed to call `RenderPassBegin()` inside a render pass.
+- It is not allowed to call `CopyResource()`, `CopyTexture()`, `CopyBuffer()` inside a render pass.
+- It is not allowed to call `Dispatch()`, `DispatchIndirect()`, `DispatchMesh()`, `DispatchMeshIndirect()`, `DispatchRays()` inside a render pass.
 - It is not allowed to call `UpdateBuffer()` inside the render pass.
+- It is not allowed to call `Barrier()` inside the render pass.
+- It is not allowed to call `ClearUAV()` inside the render pass.
 
 ##### GPU Barriers
 `GPUBarrier`s can be used to state dependencies between GPU workloads. There are different kinds of barriers:
@@ -690,6 +692,17 @@ The final shading rate will be determined from the above methods using the maxim
 To read more about variable rate shading, refer to the [DirectX specifications.](https://microsoft.github.io/DirectX-Specs/d3d/VariableRateShading)
 
 
+##### Video Decoding
+Video decoding can be used to decode compressed video bitstream in real time on the GPU. Currently only the H264 format is supported. To decode a video, the following steps need to be taken:
+- Provide H264 slice data in a `GPUBuffer`. The slice data offset needs to be aligned within the buffer with `GraphcisDevice::GetVideoDecodeBitstreamAlignment()`. The bitstream buffer needs to be an `UPLOAD` buffer currently.
+- Create `VideoDecoder` object, while providing appropriate paraemters parsed from H264 such as resolution, picture parameters, sequence parameters. The decode format must be `Format::NV12` which is a multi planar YUV420 format.
+- Create a "Decode Picture Buffer" (DPB), which is a texture array storing reference and decoded images in the native video format (currently only `Format::NV12` is supported). Indicate in the `misc_flags` that it will be used as `ResourceMiscFlags::VIDEO_DECODE`.
+- Run the `GraphicsDevice::VideoDecode` operation providing correct arguments to decode a single video frame. You are responsible to provide correct H264 arguments and DPB picture indices.
+- You will need to manually read from the DPB texture (eg. in a shader) and resolve the YUV format to RGB if you want.
+
+All this is demonstrated in the [wi::video](../../WickedEngine/wiVideo.cpp) implementation.
+
+
 #### GraphicsDevice_DX11
 The DirectX11 interface has been removed after version 0.56
 
@@ -725,7 +738,10 @@ The `flags` argument can contain various modifiers that determine what kind of o
 - `DRAWSCENE_TRANSPARENT`: Transparent objects will be rendered. Objects will be sorted back-to front, for blending purposes
 - `DRAWSCENE_OCCLUSIONCULLING`: Occluded objects won't be rendered. [Occlusion culling](#occlusion-culling) can be globally switched on/off using `wi::renderer::SetOcclusionCullingEnabled()`
 - `DRAWSCENE_TESSELLATION`: Enable [tessellation](#tessellation) (if hardware supports it). [Tessellation](#tessellation) can be globally switched on/off using `wi::renderer::SetTessellationEnabled()`
-- `DRAWSCENE_HAIRPARTICLE`: Draw hair particles
+- `DRAWSCENE_HAIRPARTICLE`: Allow drawing hair particles
+- `DRAWSCENE_IMPOSTOR` : Allow drawing impostors
+- `DRAWSCENE_OCEAN` : Allow drawing the ocean
+- `DRAWSCENE_SKIP_PLANAR_REFLECTION_OBJECTS` : Don't draw the objects which are rendering planar reflections. This is to avoid rendering the reflector object itself into the planar reflections, which could produce fully occluded reflections.
 
 #### Tessellation
 Tessellation can be used when rendering objects. Tessellation requires a GPU hardware feature and can enable displacement mapping on vertices or smoothing mesh silhouettes dynamically while rendering objects. Tessellation will be used when `tessellation` parameter to the [DrawScene](#drawscene) was set to `true` and the GPU supports the tessellation feature. Tessellation level can be specified per [MeshComponent](#meshcomponent)'s `tessellationFactor` parameter. Tessellation level will be modulated by distance from camera, so that tessellation factor will fade out on more distant objects. Greater tessellation factor means more detailed geometry will be generated.
@@ -749,14 +765,14 @@ Hardware accelerated ray tracing API is now available, so a variety of renderer 
 After the acceleration structures are updated, ray tracing shaders can use it after binding to a shader resource slot.
 
 #### Ray tracing (legacy)
-Ray tracing can be used in multiple ways to render the scene. The `RayTraceScene()` function will render the scene with the rays that are provided as the `RayBuffers` type argument. For example, to render the scene from the camera perspective, first create rays that originate from the camera and shoot towards the caera far plane for every pixel. The `GenerateScreenRayBuffers()` helper function implements this functionality, by expecting a [CameraComponent](#cameracomponent) argument and returns a `RayBuffers` structure. The result will be written to a texture that is provided as parameter. The texture must have been created with `UNORDERED_ACCESS` bind flags, because it will be written in compute shaders. The scene BVH structure must have been already built to use this, it can be accomplished by calling [wi::renderer::BuildSceneBVH()](#build-scene-bvh). The [RenderPath3D_Pathracing](#renderpath3d_pathtracing) uses this ray tracing functionality to render a path traced scene.
+Ray tracing can be used in multiple ways to render the scene. The `RayTraceScene()` function will render the scene with path tracing. The result will be written to a texture that is provided as parameter. The texture must have been created with `UNORDERED_ACCESS` bind flags, because it will be written in compute shaders. The scene BVH structure must have been already built to use this, it can be accomplished by calling `wi::renderer::UpdateRaytracingAccelerationStructures()`. The [RenderPath3D_Pathracing](#renderpath3d_pathtracing) uses this ray tracing functionality to render a path traced scene.
 
 Other than path tracing, the scene BVH can be rendered by using the `RayTraceSceneBVH` function. This will render the bounding box hierarchy to the screen as a heatmap. Blue colors mean that few boxes were hit per pixel, and with more bounding box hits the colors go to green, yellow, red, and finaly white. This is useful to determine how expensive a the scene is with regards to ray tracing performance.
 
 The lightmap baking is also using ray tracing on the GPU to precompute static lighting for objects in the scene. [Objects](#objectcomponent) that contain lightmap atlas texture coordinate set can start lightmap rendering by setting `ObjectComponent::SetLightmapRenderRequest(true)`. Every object that have this flag set will have their lightmaps updated by performing ray traced rendering by the [wi::renderer](#wi::renderer) internally. Lightmap texture coordinates can be generated by a separate tool, such as the Wicked Engine Editor application. Lightmaps will be rendered to a global lightmap atlas that can be used by all shaders to read static lighting data. The global lightmap atlas texture contains lightmaps from all objects inside the scene in a compact format for performance. Apart from that, each object contains its own lightmap in a full precision texture format that can be post-processed and saved to disc for later use. To denoise lightmaps, follow the same steps as the path tracer denoiser setup described in the [Denoiser](#denoiser) section.
 
 #### Scene BVH
-The scene BVH can be rebuilt from scratch using the `wi::renderer::BuildSceneBVH()` function. This will use the global scene to build the BVH hierarchy and global material atlases. The [ray tracing](#ray-tracing) features require the scene BVH to be built before using them. This is using the [wiGPUBVH](#wigpubvh) facility to build the BVH using compute shaders running on the GPU. 
+The scene BVH can be rebuilt from scratch using the `wi::renderer::UpdateRaytracingAccelerationStructures()` function. The [ray tracing](#ray-tracing) features require the scene BVH to be built before using them. This is using the [wiGPUBVH](#wigpubvh) facility to build the BVH using compute shaders running on the GPU when hardware ray tracing is not available. Otherwise it uses ray tracing acceleration structure API objects. 
 
 #### Decals
 The [DecalComponents](#decalcomponent) in the scene can be rendered differently based on the rendering technique that is being used. The two main rendering techinques are forward and deferred rendering. 
@@ -783,7 +799,7 @@ Instanced rendering will be always used automatically when rendering objects. Th
 <i>Tip: to find out more about how instancing is used to batch objects together, take a look at the `RenderMeshes()` function inside [wi::renderer.cpp](../WickedEngine/wi::renderer.cpp)</i>
 
 #### Stencil
-If a depth stencil buffer is bound when using [DrawScene()](#drawscene), or [DrawScene_Transparent()](#drawscene_transparent), the stencil buffer will be written. The stencil is a 8-bit mask that can be used to achieve different kinds of screen space effects for different objects. [MaterialComponents](#materialcomponent) and [ObjectComponents](#objectcomponent) have the ability to set the stencil value that will be rendered. The 8-bit stencil value is separated into two parts:
+If a depth stencil buffer is bound when using [DrawScene()](#drawscene), the stencil buffer will be written. The stencil is a 8-bit mask that can be used to achieve different kinds of screen space effects for different objects. [MaterialComponents](#materialcomponent) and [ObjectComponents](#objectcomponent) have the ability to set the stencil value that will be rendered. The 8-bit stencil value is separated into two parts:
 - The first 4 bits are reseved for engine-specific values, such as to separate skin, sky, common materials from each other. these values are contained in [wiEnums](#wienums) in the `STENCILREF` enum.
 - The last 4 bits are reserved for user stencil values. The application can decide what it wants to use these for.
 
@@ -820,7 +836,11 @@ Configuring other debug rendering functionality:
 #### Custom Shaders
 Apart from the built in material shaders, the developer can create a library of custom shaders from the application side and assign them to materials. The `wi::renderer::RegisterCustomShader()` function is used to register a custom shader from the application. The function returns the ID of the custom shader that can be input to the `MaterialComponent::SetCustomShaderID()` function. 
 
-The custom shader is essentially the combination of a [Pipeline State Object](#pipeline-states-and-shaders) for each `RENDERPASS` and a `RENDERTYPE` flag that specifies whether it is to be drawn in a transparent or opaque, or other kind of pass within a `RENDERPASS`. The developer is responsible of creating a fully valid pipeline state to render a mesh. If a pipeline state is left as empty for a combination of `RENDERPASS` and `RENDERTYPE`, then the material will simply be skipped and not rendered.
+The `CustomShader` is essentially the combination of a [Pipeline State Object](#pipeline-states-and-shaders) for each `RENDERPASS` that specifies whether it is to be drawn in a transparent or opaque, or other kind of pass within a `RENDERPASS`. The developer is responsible of creating a fully valid pipeline state to render a mesh. If a pipeline state is left as empty for a combination of `RENDERPASS`, then the material will simply be skipped and not rendered in that pass. The other part of `CustomShader` is a name, that can be used as simple identifier for the user, and a `filterMask` that will be used to indicate what kind of material this is to multiple systems. You can set the `filterMask` to any combination of `wi::enums::FILTER` for your purposes, but you have to include `FILTER_OPAQUE` or `FILTER_TRANSPARENT` to indicate if this is going to be rendered in opaque or transparent passes (or both).
+
+The `MaterialComponent::userdata` can also be used to provide a small amount of custom material data that will be available to shaders. You can access that in shaders from `ShaderMaterial::userdata`. If the built in user data is not enough for your purposes, you can create additional `GPUBuffer` objects and send descriptor indices in user data to access extended user data indirectly.
+
+To look at an example, take a look at the built in Hologram custom shader and see how exactly to create a valid pipeline state, shader, etc.
 
 
 ### Enums
@@ -831,8 +851,8 @@ This is a collection of enum values used by the wi::renderer to identify graphic
 enum CBTYPE
 {
 	CBTYPE_MESH, // = 0
-	CBTYPE_APPLESANDORANGES, // = 1
-	CBTYPE_TAKEITEASY, // = 2
+	CBTYPE_SOMETHING_ELSE, // = 1
+	CBTYPE_AN_OTHER_THING, // = 2
 	CBTYPE_COUNT // = 3
 };
 GPUBuffer buffers[CBTYPE_COUNT]; // this example array contains 3 elements
@@ -846,7 +866,7 @@ This is widely used to make code straight forward and easy to add new objects, w
 [[Header]](../../WickedEngine/wiImage.h) [[Cpp]](../../WickedEngine/wiImage.cpp)
 This can render images to the screen in a simple manner. You can draw an image like this:
 ```cpp
-wi::image::SetCanvas(canvas, cmd); // setting the canvas area is required to set the drawing area and perform DPI scaling (the canvas will remain for the duration of the command list)
+wi::image::SetCanvas(canvas); // setting the canvas area is required to set the drawing area and perform DPI scaling (this is only for the current thread)
 wi::image::Draw(myTexture, wiImageParams(10, 20, 256, 128), cmd);
 ```
 The example will draw a 2D texture image to the position (10, 20), with a size of 256 x 128 pixels to the current render pass. There are a lot of other parameters to customize the rendered image, for more information see wiImageParams structure.
@@ -857,7 +877,7 @@ Describe all parameters of how and where to draw the image on the screen.
 [[Header]](../../WickedEngine/wiFont.h) [[Cpp]](../../WickedEngine/wiFont.cpp)
 This can render fonts to the screen in a simple manner. You can render a font as simple as this:
 ```cpp
-wi::font::SetCanvas(canvas, cmd); // setting the canvas area is required to set the drawing area and perform DPI scaling (the canvas will remain for the duration of the command list)
+wi::font::SetCanvas(canvas); // setting the canvas area is required to set the drawing area and perform DPI scaling (this is only for the current thread)
 wi::font::Draw("write this!", wiFontParams(10, 20), cmd);
 ```
 Which will write the text <i>write this!</i> to 10, 20 pixel position onto the screen. There are many other parameters to describe the font's position, size, color, etc. See the wiFontParams structure for more details.

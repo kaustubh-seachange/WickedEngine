@@ -1,12 +1,9 @@
 #include "stdafx.h"
 #include "MeshWindow.h"
-#include "Editor.h"
 
 #include "Utility/stb_image.h"
 
 #include "meshoptimizer/meshoptimizer.h"
-
-#include <string>
 
 using namespace wi::ecs;
 using namespace wi::scene;
@@ -15,7 +12,7 @@ void MeshWindow::Create(EditorComponent* _editor)
 {
 	editor = _editor;
 	wi::gui::Window::Create(ICON_MESH " Mesh", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE);
-	SetSize(XMFLOAT2(580, 730));
+	SetSize(XMFLOAT2(580, 800));
 
 	closeButton.SetTooltip("Delete MeshComponent");
 	OnClose([=](wi::gui::EventArgs args) {
@@ -37,7 +34,7 @@ void MeshWindow::Create(EditorComponent* _editor)
 	float step = hei + 2;
 	float wid = 170;
 
-	float infolabel_height = 190;
+	float infolabel_height = 200;
 	meshInfoLabel.Create("Mesh Info");
 	meshInfoLabel.SetPos(XMFLOAT2(20, y));
 	meshInfoLabel.SetSize(XMFLOAT2(260, infolabel_height));
@@ -57,14 +54,69 @@ void MeshWindow::Create(EditorComponent* _editor)
 		if (mesh != nullptr)
 		{
 			subset = args.iValue;
-			if (!editor->translator.selected.empty())
+
+			uint32_t main_subset_count = mesh->subsets_per_lod > 0 ? mesh->subsets_per_lod : (uint32_t)mesh->subsets.size();
+			if (main_subset_count <= (uint32_t)subset)
 			{
-				editor->translator.selected.back().subsetIndex = subset;
+				wi::Archive& archive = editor->AdvanceHistory();
+				archive << EditorComponent::HISTORYOP_COMPONENT_DATA;
+				editor->RecordEntity(archive, entity);
+
+				uint32_t first_subset = 0;
+				uint32_t last_subset = 0;
+				mesh->GetLODSubsetRange(0, first_subset, last_subset);
+				wi::vector<MeshComponent::MeshSubset> newSubsets;
+				for (uint32_t i = first_subset; i < last_subset; ++i)
+				{
+					newSubsets.push_back(mesh->subsets[i]);
+				}
+				newSubsets.emplace_back().indexCount = (uint32_t)mesh->indices.size();
+				mesh->subsets = newSubsets;
+				mesh->subsets_per_lod = 0;
+
+				editor->RecordEntity(archive, entity);
 			}
+
+			SetEntity(entity, subset);
 		}
 	});
-	subsetComboBox.SetTooltip("Select a subset. A subset can also be selected by picking it in the 3D scene.\nLook at the material window when a subset is selected to edit it.");
+	subsetComboBox.SetTooltip("Select a subset. A subset can also be selected by picking it in the 3D scene.\nLook at the material window when a subset is selected to edit it.\nIf you add a new subset, LODs will be lost and need to be regenerated!");
 	AddWidget(&subsetComboBox);
+
+	subsetRemoveButton.Create("X");
+	subsetRemoveButton.SetTooltip("Remove currently selected subset. LODs will be lost and need to be regenerated!");
+	subsetRemoveButton.OnClick([=](wi::gui::EventArgs args) {
+		Scene& scene = editor->GetCurrentScene();
+		MeshComponent* mesh = scene.meshes.GetComponent(entity);
+		if (mesh != nullptr)
+		{
+			wi::Archive& archive = editor->AdvanceHistory();
+			archive << EditorComponent::HISTORYOP_COMPONENT_DATA;
+			editor->RecordEntity(archive, entity);
+
+			int selected = subsetComboBox.GetSelected();
+
+			uint32_t first_subset = 0;
+			uint32_t last_subset = 0;
+			mesh->GetLODSubsetRange(0, first_subset, last_subset);
+			wi::vector<MeshComponent::MeshSubset> newSubsets;
+			int s = 0;
+			for (uint32_t i = first_subset; i < last_subset; ++i)
+			{
+				if (s != selected)
+				{
+					newSubsets.push_back(mesh->subsets[i]);
+				}
+				s++;
+			}
+			mesh->subsets = newSubsets;
+			mesh->subsets_per_lod = 0;
+			SetEntity(entity, selected - 1);
+
+			editor->RecordEntity(archive, entity);
+		}
+	});
+	AddWidget(&subsetRemoveButton);
 
 	doubleSidedCheckBox.Create("Double Sided: ");
 	doubleSidedCheckBox.SetTooltip("If enabled, the inside of the mesh will be visible.");
@@ -91,6 +143,37 @@ void MeshWindow::Create(EditorComponent* _editor)
 		}
 		});
 	AddWidget(&doubleSidedShadowCheckBox);
+
+	bvhCheckBox.Create("Enable BVH: ");
+	bvhCheckBox.SetTooltip("Whether to generate BVH (Bounding Volume Hierarchy) for the mesh or not.\nBVH will be used to optimize intersections with the mesh at an additional memory cost.\nIt is recommended to use a BVH for high polygon count meshes that will be used for intersections.\nThis CPU BVH does not support skinned or morphed geometry.");
+	bvhCheckBox.SetSize(XMFLOAT2(hei, hei));
+	bvhCheckBox.SetPos(XMFLOAT2(x, y += step));
+	bvhCheckBox.OnClick([&](wi::gui::EventArgs args) {
+		MeshComponent* mesh = editor->GetCurrentScene().meshes.GetComponent(entity);
+		if (mesh != nullptr)
+		{
+			mesh->SetBVHEnabled(args.bValue);
+		}
+	});
+	AddWidget(&bvhCheckBox);
+
+	quantizeCheckBox.Create("Quantization Disabled: ");
+	quantizeCheckBox.SetTooltip("Disable quantization of vertex positions if you notice inaccuracy errors with UNORM position formats.");
+	quantizeCheckBox.SetSize(XMFLOAT2(hei, hei));
+	quantizeCheckBox.SetPos(XMFLOAT2(x, y += step));
+	quantizeCheckBox.OnClick([&](wi::gui::EventArgs args) {
+		MeshComponent* mesh = editor->GetCurrentScene().meshes.GetComponent(entity);
+		if (mesh != nullptr)
+		{
+			mesh->SetQuantizedPositionsDisabled(args.bValue);
+			mesh->CreateRenderData();
+			if (!mesh->BLASes.empty())
+			{
+				mesh->CreateRaytracingRenderData();
+			}
+		}
+		});
+	AddWidget(&quantizeCheckBox);
 
 	impostorCreateButton.Create("Create Impostor");
 	impostorCreateButton.SetTooltip("Create an impostor image of the mesh. The mesh will be replaced by this image when far away, to render faster.");
@@ -226,12 +309,13 @@ void MeshWindow::Create(EditorComponent* _editor)
 	AddWidget(&recenterToBottomButton);
 
 	mergeButton.Create("Merge Selected");
-	mergeButton.SetTooltip("Merges selected objects/meshes into one.");
+	mergeButton.SetTooltip("Merges selected objects/meshes into one.\nAll selected object transformations will be applied to meshes and allmeshes will be baked into a single mesh.");
 	mergeButton.SetSize(XMFLOAT2(mod_wid, hei));
 	mergeButton.SetPos(XMFLOAT2(mod_x, y += step));
 	mergeButton.OnClick([=](wi::gui::EventArgs args) {
 		Scene& scene = editor->GetCurrentScene();
 		MeshComponent merged_mesh;
+		ObjectComponent merged_object;
 		bool valid_normals = false;
 		bool valid_uvset_0 = false;
 		bool valid_uvset_1 = false;
@@ -250,6 +334,9 @@ void MeshWindow::Create(EditorComponent* _editor)
 			MeshComponent* mesh = scene.meshes.GetComponent(object->meshID);
 			if (mesh == nullptr)
 				continue;
+			merged_object._flags |= object->_flags;
+			merged_object.filterMask |= object->filterMask;
+			merged_mesh._flags |= mesh->_flags;
 			const TransformComponent* transform = scene.transforms.GetComponent(picked.entity);
 			XMMATRIX W = XMLoadFloat4x4(&transform->world);
 			uint32_t vertexOffset = (uint32_t)merged_mesh.vertex_positions.size();
@@ -367,8 +454,22 @@ void MeshWindow::Create(EditorComponent* _editor)
 			{
 				merged_mesh.armatureID = mesh->armatureID;
 			}
-			entities_to_remove.insert(object->meshID);
 			entities_to_remove.insert(picked.entity);
+
+			// Only remove mesh if it is no longer used by any other objects:
+			bool mesh_still_used = false;
+			for (size_t i = 0; i < scene.objects.GetCount(); ++i)
+			{
+				if (entities_to_remove.count(scene.objects.GetEntity(i)) == 0 && scene.objects[i].meshID == object->meshID)
+				{
+					mesh_still_used = true;
+					break;
+				}
+			}
+			if (!mesh_still_used)
+			{
+				entities_to_remove.insert(object->meshID);
+			}
 		}
 
 		if (!merged_mesh.vertex_positions.empty())
@@ -393,6 +494,7 @@ void MeshWindow::Create(EditorComponent* _editor)
 			Entity merged_object_entity = scene.Entity_CreateObject("mergedObject");
 			Entity merged_mesh_entity = scene.Entity_CreateMesh("mergedMesh");
 			ObjectComponent* object = scene.objects.GetComponent(merged_object_entity);
+			*object = std::move(merged_object);
 			object->meshID = merged_mesh_entity;
 			MeshComponent* mesh = scene.meshes.GetComponent(merged_mesh_entity);
 			*mesh = std::move(merged_mesh);
@@ -430,6 +532,121 @@ void MeshWindow::Create(EditorComponent* _editor)
 		}
 		});
 	AddWidget(&optimizeButton);
+
+	exportHeaderButton.Create("Export to C++ header");
+	exportHeaderButton.SetTooltip("Export vertex positions and index buffer into a C++ header file.\n - Object transformation (if selected through object picking) and Skinning pose will be applied.\n - Only LOD0 will be exported.\n - The generated vertex positions and indices will be reordered and optimized without considering other vertex attributes.");
+	exportHeaderButton.SetSize(XMFLOAT2(mod_wid, hei));
+	exportHeaderButton.SetPos(XMFLOAT2(mod_x, y += step));
+	exportHeaderButton.OnClick([&](wi::gui::EventArgs args) {
+		MeshComponent* mesh = editor->GetCurrentScene().meshes.GetComponent(entity);
+		if (mesh == nullptr)
+			return;
+
+		wi::helper::FileDialogParams params;
+		params.description = ".h (C++ header file)";
+		params.extensions.push_back("h");
+		params.type = wi::helper::FileDialogParams::TYPE::SAVE;
+		wi::helper::FileDialog(params, [=](std::string filename) {
+			wi::eventhandler::Subscribe_Once(wi::eventhandler::EVENT_THREAD_SAFE_POINT, [=](uint64_t userdata) {
+				// Bake transformed and skinned positions:
+				wi::vector<XMFLOAT3> vertices(mesh->vertex_positions.size());
+				const Scene& scene = editor->GetCurrentScene();
+				XMMATRIX M = XMMatrixIdentity();
+				if (editor->componentsWnd.objectWnd.entity != INVALID_ENTITY)
+				{
+					// if first selection is an object then transformation will be also applied
+					Entity object_entity = editor->componentsWnd.objectWnd.entity;
+					const ObjectComponent* object = scene.objects.GetComponent(object_entity);
+					if (object != nullptr)
+					{
+						size_t index = scene.objects.GetIndex(object_entity);
+						M = XMLoadFloat4x4(&scene.matrix_objects[index]);
+					}
+				}
+				const ArmatureComponent* armature = scene.armatures.GetComponent(mesh->armatureID);
+				for (size_t i = 0; i < mesh->vertex_positions.size(); ++i)
+				{
+					XMVECTOR P;
+					if (armature == nullptr)
+					{
+						P = XMLoadFloat3(&mesh->vertex_positions[i]);
+					}
+					else
+					{
+						P = wi::scene::SkinVertex(*mesh, *armature, (uint32_t)i);
+					}
+					P = XMVector3Transform(P, M);
+					XMStoreFloat3(&vertices[i], P);
+				}
+
+				// Gather all indices for all subsets in LOD0:
+				wi::vector<uint32_t> indices;
+				uint32_t first_subset = 0;
+				uint32_t last_subset = 0;
+				mesh->GetLODSubsetRange(0, first_subset, last_subset);
+				for (uint32_t subsetIndex = first_subset; subsetIndex < last_subset; ++subsetIndex)
+				{
+					const MeshComponent::MeshSubset& subset = mesh->subsets[subsetIndex];
+					if (subset.indexCount == 0)
+						continue;
+					for (uint32_t i = 0; i < subset.indexCount; ++i)
+					{
+						indices.push_back(mesh->indices[subset.indexOffset + i]);
+					}
+				}
+
+				// Generate shadow indices for position-only stream:
+				wi::vector<uint32_t> shadow_indices(indices.size() * 2); // *2 fixes some weird memory oob write issue with a specific model
+				meshopt_generateShadowIndexBuffer(
+					shadow_indices.data(), indices.data(), indices.size(),
+					vertices.data(), vertices.size(), sizeof(XMFLOAT3), sizeof(XMFLOAT3)
+				);
+
+				// De-duplicate vertices based on shadow index buffer:
+				wi::vector<unsigned int> remap(shadow_indices.size());
+				const size_t vertex_count = meshopt_generateVertexRemap(
+					remap.data(),
+					shadow_indices.data(), shadow_indices.size(),
+					vertices.data(), vertices.size(), sizeof(XMFLOAT3)
+				);
+				wi::vector<XMFLOAT3> remapped_vertices(vertex_count);
+				wi::vector<uint32_t> remapped_indices(shadow_indices.size());
+				meshopt_remapIndexBuffer(remapped_indices.data(), shadow_indices.data(), shadow_indices.size(), remap.data());
+				meshopt_remapVertexBuffer(remapped_vertices.data(), vertices.data(), vertices.size() /*initial vertex count, not the one returned from meshopt_generateVertexRemap*/, sizeof(XMFLOAT3), remap.data());
+
+				// Optimizations:
+				meshopt_optimizeVertexCache(remapped_indices.data(), remapped_indices.data(), remapped_indices.size(), vertex_count);
+				meshopt_optimizeVertexFetch(remapped_vertices.data(), remapped_indices.data(), remapped_indices.size(), remapped_vertices.data(), vertex_count, sizeof(XMFLOAT3));
+
+				// Generate C++ header syntax:
+				std::string str;
+				str += "static const float3 vertices[" + std::to_string(remapped_vertices.size()) + "] = {\n";
+				for (auto& pos : remapped_vertices)
+				{
+					str += "\tfloat3(" + std::to_string(pos.x) + "f," + std::to_string(pos.y) + "f," + std::to_string(pos.z) + "f),\n";
+				}
+				str += "};\n";
+				str += "static const unsigned int indices[" + std::to_string(remapped_indices.size()) + "] = {\n";
+				for (size_t i = 0; i < remapped_indices.size(); i += 3)
+				{
+					str += "\t" + std::to_string(remapped_indices[i + 0]) + "," + std::to_string(remapped_indices[i + 1]) + "," + std::to_string(remapped_indices[i + 2]) + ",\n";
+				}
+				str += "};\n";
+
+				// Write to file:
+				std::string filename_dest = wi::helper::ForceExtension(filename, "h");
+				if (wi::helper::FileWrite(filename_dest, (uint8_t*)str.c_str(), str.length()))
+				{
+					editor->PostSaveText("Mesh exported to header file: ", filename_dest);
+				}
+				else
+				{
+					editor->PostSaveText("Failed to write file: ", filename_dest);
+				}
+			});
+		});
+	});
+	AddWidget(&exportHeaderButton);
 
 
 
@@ -480,7 +697,6 @@ void MeshWindow::Create(EditorComponent* _editor)
 		if (mesh != nullptr && morphTargetCombo.GetSelected() < (int)mesh->morph_targets.size())
 		{
 			mesh->morph_targets[morphTargetCombo.GetSelected()].weight = args.fValue;
-			mesh->dirty_morph = true;
 		}
 	});
 	AddWidget(&morphTargetSlider);
@@ -641,14 +857,36 @@ void MeshWindow::SetEntity(Entity entity, int subset)
 
 	if (mesh != nullptr)
 	{
-		const NameComponent& name = *scene.names.GetComponent(entity);
-
 		std::string ss;
-		ss += "Mesh name: " + name.name + "\n";
+		const NameComponent* name = scene.names.GetComponent(entity);
+		if (name != nullptr)
+		{
+			ss += "Mesh name: " + name->name + "\n";
+		}
 		ss += "Vertex count: " + std::to_string(mesh->vertex_positions.size()) + "\n";
 		ss += "Index count: " + std::to_string(mesh->indices.size()) + "\n";
+		ss += "Index format: " + std::string(wi::graphics::GetIndexBufferFormatString(mesh->GetIndexFormat())) + "\n";
+		ss += "Position format: " + std::string(wi::graphics::GetFormatString(mesh->position_format)) + "\n";
 		ss += "Subset count: " + std::to_string(mesh->subsets.size()) + " (" + std::to_string(mesh->GetLODCount()) + " LODs)\n";
-		ss += "GPU memory: " + std::to_string((mesh->generalBuffer.GetDesc().size + mesh->streamoutBuffer.GetDesc().size) / 1024.0f / 1024.0f) + " MB\n";
+		if (!mesh->morph_targets.empty())
+		{
+			ss += "Morph target count: " + std::to_string(mesh->morph_targets.size()) + "\n";
+		}
+		ss += "CPU memory: " + wi::helper::GetMemorySizeText(mesh->GetMemoryUsageCPU()) + "\n";
+		if (mesh->bvh.IsValid())
+		{
+			ss += "\tCPU BVH size: " + wi::helper::GetMemorySizeText(mesh->GetMemoryUsageBVH()) + "\n";
+		}
+		ss += "GPU memory: " + wi::helper::GetMemorySizeText(mesh->GetMemoryUsageGPU()) + "\n";
+		if (!mesh->BLASes.empty())
+		{
+			size_t size = 0;
+			for (auto& x : mesh->BLASes)
+			{
+				size += x.size;
+			}
+			ss += "\tBLAS size: " + wi::helper::GetMemorySizeText(size) + "\n";
+		}
 		ss += "\nVertex buffers:\n";
 		if (!mesh->vertex_positions.empty()) ss += "\tposition;\n";
 		if (!mesh->vertex_normals.empty()) ss += "\tnormal;\n";
@@ -659,18 +897,25 @@ void MeshWindow::SetEntity(Entity entity, int subset)
 		if (mesh->so_pre.IsValid()) ss += "\tprevious_position;\n";
 		if (mesh->vb_bon.IsValid()) ss += "\tbone;\n";
 		if (mesh->vb_tan.IsValid()) ss += "\ttangent;\n";
-		if (mesh->so_pos_nor_wind.IsValid()) ss += "\tstreamout_position;\n";
+		if (mesh->so_pos.IsValid()) ss += "\tstreamout_position;\n";
+		if (mesh->so_nor.IsValid()) ss += "\tstreamout_normals;\n";
 		if (mesh->so_tan.IsValid()) ss += "\tstreamout_tangents;\n";
 		meshInfoLabel.SetText(ss);
 
 		subsetComboBox.ClearItems();
-		for (size_t i = 0; i < mesh->subsets.size(); ++i)
+		uint32_t main_subset_count = mesh->subsets_per_lod > 0 ? mesh->subsets_per_lod : (uint32_t)mesh->subsets.size();
+		for (uint32_t i = 0; i < main_subset_count; ++i)
 		{
 			subsetComboBox.AddItem(std::to_string(i));
 		}
-		if (subset >= 0)
+		subsetComboBox.AddItem("[Create New] " + std::to_string(main_subset_count));
+
+		subset = std::max(0, std::min(subset, (int)main_subset_count - 1));
+		subsetComboBox.SetSelectedWithoutCallback(subset);
+
+		if (!editor->translator.selected.empty())
 		{
-			subsetComboBox.SetSelectedWithoutCallback(subset);
+			editor->translator.selected.back().subsetIndex = subset;
 		}
 
 		subsetMaterialComboBox.ClearItems();
@@ -678,8 +923,16 @@ void MeshWindow::SetEntity(Entity entity, int subset)
 		for (size_t i = 0; i < scene.materials.GetCount(); ++i)
 		{
 			Entity entity = scene.materials.GetEntity(i);
-			const NameComponent& name = *scene.names.GetComponent(entity);
-			subsetMaterialComboBox.AddItem(name.name);
+
+			if (scene.names.Contains(entity))
+			{
+				const NameComponent& name = *scene.names.GetComponent(entity);
+				subsetMaterialComboBox.AddItem(name.name);
+			}
+			else
+			{
+				subsetMaterialComboBox.AddItem(std::to_string(entity));
+			}
 
 			if (subset >= 0 && subset < mesh->subsets.size() && mesh->subsets[subset].materialID == entity)
 			{
@@ -689,6 +942,8 @@ void MeshWindow::SetEntity(Entity entity, int subset)
 
 		doubleSidedCheckBox.SetCheck(mesh->IsDoubleSided());
 		doubleSidedShadowCheckBox.SetCheck(mesh->IsDoubleSidedShadow());
+		bvhCheckBox.SetCheck(mesh->bvh.IsValid());
+		quantizeCheckBox.SetCheck(mesh->IsQuantizedPositionsDisabled());
 
 		const ImpostorComponent* impostor = scene.impostors.GetComponent(entity);
 		if (impostor != nullptr)
@@ -773,9 +1028,13 @@ void MeshWindow::ResizeLayout()
 
 	add_fullwidth(meshInfoLabel);
 	add(subsetComboBox);
+	subsetRemoveButton.SetPos(XMFLOAT2(subsetComboBox.GetPos().x + subsetComboBox.GetSize().x + 1 + subsetComboBox.GetSize().y, subsetComboBox.GetPos().y));
+	subsetRemoveButton.SetSize(XMFLOAT2(subsetComboBox.GetSize().y, subsetComboBox.GetSize().y));
 	add(subsetMaterialComboBox);
 	add_right(doubleSidedCheckBox);
 	add_right(doubleSidedShadowCheckBox);
+	add_right(bvhCheckBox);
+	add_right(quantizeCheckBox);
 	add_fullwidth(impostorCreateButton);
 	add(impostorDistanceSlider);
 	add(tessellationFactorSlider);
@@ -787,6 +1046,7 @@ void MeshWindow::ResizeLayout()
 	add_fullwidth(recenterToBottomButton);
 	add_fullwidth(mergeButton);
 	add_fullwidth(optimizeButton);
+	add_fullwidth(exportHeaderButton);
 
 	add(morphTargetCombo);
 	add(morphTargetSlider);

@@ -1,7 +1,8 @@
 #define RAY_BACKFACE_CULLING
 #define RAYTRACE_STACK_SHARED
 #define SURFACE_LOAD_MIPCONE
-#define SVT // "Sparse Virtual Texture"
+#define SVT_FEEDBACK
+#define TEXTURE_SLOT_NONUNIFORM
 #include "globals.hlsli"
 #include "raytracingHF.hlsli"
 #include "lightingHF.hlsli"
@@ -13,6 +14,8 @@ static const uint ANYTHIT_CUTOFF_AFTER_BOUNCE_COUNT = 1;
 RWTexture2D<float4> output : register(u0);
 RWTexture2D<float4> output_albedo : register(u1);
 RWTexture2D<float4> output_normal : register(u2);
+RWTexture2D<float> output_depth : register(u3);
+RWTexture2D<uint> output_stencil : register(u4);
 
 [numthreads(RAYTRACING_LAUNCH_BLOCKSIZE, RAYTRACING_LAUNCH_BLOCKSIZE, 1)]
 void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
@@ -51,6 +54,9 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 
 	RayCone raycone = pixel_ray_cone_from_image_height(xTraceResolution.y);
 
+	float depth = 0;
+	uint stencil = 0;
+
 	const uint bounces = xTraceUserData.x;
 	for (uint bounce = 0; bounce < bounces; ++bounce)
 	{
@@ -59,11 +65,9 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 		float4 additive_dist = float4(0, 0, 0, FLT_MAX);
 
 #ifdef RTAPI
-		RayQuery<
-			RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES
-		> q;
+		wiRayQuery q;
 
-		uint flags = 0;
+		uint flags = RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES;
 #ifdef RAY_BACKFACE_CULLING
 		flags |= RAY_FLAG_CULL_BACK_FACING_TRIANGLES;
 #endif // RAY_BACKFACE_CULLING
@@ -122,7 +126,7 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 			if (IsStaticSky())
 			{
 				// We have envmap information in a texture:
-				envColor = DEGAMMA_SKY(texture_globalenvmap.SampleLevel(sampler_linear_clamp, ray.Direction, 0).rgb);
+				envColor = GetStaticSkyColor(ray.Direction);
 			}
 			else
 			{
@@ -176,12 +180,22 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 
 		result += energy * surface.emissiveColor;
 
-		raycone = raycone.propagate(surface.roughnessBRDF, surface.hit_depth);
+		float roughnessBRDF = sqr(clamp(surface.roughness, 0.045, 1));
+		raycone = raycone.propagate(roughnessBRDF, surface.hit_depth);
 
 		if (bounce == 0)
 		{
 			primary_albedo = surface.albedo;
 			primary_normal = surface.N;
+			stencil = surface.material.stencilRef;
+			uint userStencilRefOverride = surface.inst.GetUserStencilRef();
+			if (userStencilRefOverride > 0)
+			{
+				stencil = (userStencilRefOverride << 4u) | (stencil & 0xF);
+			}
+			float4 tmp = mul(GetCamera().view_projection, float4(surface.P, 1));
+			tmp.xyz /= max(0.0001, tmp.w); // max: avoid nan
+			depth = saturate(tmp.z); // saturate: avoid blown up values
 		}
 
 		if (surface.material.IsUnlit())
@@ -212,6 +226,7 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 				dist = FLT_MAX;
 
 				L = light.GetDirection().xyz;
+				L += sample_hemisphere_cos(L, rng) * light.GetRadius();
 
 				surfaceToLight.create(surface, L);
 
@@ -230,6 +245,8 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 			break;
 			case ENTITY_TYPE_POINTLIGHT:
 			{
+				light.position += light.GetDirection() * (rng.next_float() - 0.5) * light.GetLength();
+				light.position += sample_hemisphere_cos(normalize(light.position - surface.P), rng) * light.GetRadius();
 				L = light.position - surface.P;
 				const float dist2 = dot(L, L);
 				const float range = light.GetRange();
@@ -254,6 +271,8 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 			break;
 			case ENTITY_TYPE_SPOTLIGHT:
 			{
+				float3 Loriginal = normalize(light.position - surface.P);
+				light.position += sample_hemisphere_cos(normalize(light.position - surface.P), rng) * light.GetRadius();
 				L = light.position - surface.P;
 				const float dist2 = dot(L, L);
 				const float range = light.GetRange();
@@ -270,7 +289,7 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 					[branch]
 					if (any(surfaceToLight.NdotL_sss))
 					{
-						const float spot_factor = dot(L, light.GetDirection());
+						const float spot_factor = dot(Loriginal, light.GetDirection());
 						const float spot_cutoff = light.GetConeAngleCos();
 
 						[branch]
@@ -289,56 +308,60 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 			{
 				float3 shadow = energy;
 
-				RayDesc newRay;
-				newRay.Origin = surface.P;
-				newRay.Direction = normalize(lerp(L, sample_hemisphere_cos(L, rng), 0.025 + max3(surface.sss)));
-				newRay.TMin = 0.001;
-				newRay.TMax = dist;
+				if(light.IsCastingShadow() && surface.IsReceiveShadow())
+				{
+					RayDesc newRay;
+					newRay.Origin = surface.P;
+					newRay.TMin = 0.001;
+					newRay.TMax = dist;
+					newRay.Direction = L + max3(surface.sss);
 
 #ifdef RTAPI
 
-				uint flags = RAY_FLAG_CULL_FRONT_FACING_TRIANGLES;
-				if (bounce > ANYTHIT_CUTOFF_AFTER_BOUNCE_COUNT)
-				{
-					flags |= RAY_FLAG_FORCE_OPAQUE;
-				}
-
-				q.TraceRayInline(
-					scene_acceleration_structure,	// RaytracingAccelerationStructure AccelerationStructure
-					flags,							// uint RayFlags
-					0xFF,							// uint InstanceInclusionMask
-					newRay							// RayDesc Ray
-				);
-				while (q.Proceed())
-				{
-					PrimitiveID prim;
-					prim.primitiveIndex = q.CandidatePrimitiveIndex();
-					prim.instanceIndex = q.CandidateInstanceID();
-					prim.subsetIndex = q.CandidateGeometryIndex();
-
-					Surface surface;
-					surface.init();
-					surface.hit_depth = q.CandidateTriangleRayT();
-					if (!surface.load(prim, q.CandidateTriangleBarycentrics()))
-						break;
-
-					shadow *= lerp(1, surface.albedo * surface.transmission, surface.opacity);
-
-					[branch]
-					if (!any(shadow))
+					uint flags = RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES | RAY_FLAG_CULL_FRONT_FACING_TRIANGLES;
+					if (bounce > ANYTHIT_CUTOFF_AFTER_BOUNCE_COUNT)
 					{
-						q.CommitNonOpaqueTriangleHit();
+						flags |= RAY_FLAG_FORCE_OPAQUE;
 					}
-				}
-				shadow = q.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0 : shadow;
+
+					q.TraceRayInline(
+						scene_acceleration_structure,	// RaytracingAccelerationStructure AccelerationStructure
+						flags,							// uint RayFlags
+						0xFF,							// uint InstanceInclusionMask
+						newRay							// RayDesc Ray
+					);
+					while (q.Proceed())
+					{
+						PrimitiveID prim;
+						prim.primitiveIndex = q.CandidatePrimitiveIndex();
+						prim.instanceIndex = q.CandidateInstanceID();
+						prim.subsetIndex = q.CandidateGeometryIndex();
+
+						Surface surface;
+						surface.init();
+						surface.hit_depth = q.CandidateTriangleRayT();
+						if (!surface.load(prim, q.CandidateTriangleBarycentrics()))
+							break;
+
+						shadow *= lerp(1, surface.albedo * surface.transmission, surface.opacity);
+
+						[branch]
+						if (!any(shadow))
+						{
+							q.CommitNonOpaqueTriangleHit();
+						}
+					}
+					shadow = q.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0 : shadow;
 #else
-				shadow = TraceRay_Any(newRay, xTraceUserData.y, rng, groupIndex) ? 0 : shadow;
+					shadow = TraceRay_Any(newRay, xTraceUserData.y, rng, groupIndex) ? 0 : shadow;
 #endif // RTAPI
+				}
+				
 				if (any(shadow))
 				{
 					lightColor *= shadow;
-					lighting.direct.specular = lightColor * BRDF_GetSpecular(surface, surfaceToLight);
 					lighting.direct.diffuse = lightColor * BRDF_GetDiffuse(surface, surfaceToLight);
+					lighting.direct.specular = lightColor * BRDF_GetSpecular(surface, surfaceToLight);
 					result += light_count * mad(surface.albedo / PI * (1 - surface.transmission), lighting.direct.diffuse, lighting.direct.specular) * surface.opacity;
 				}
 			}
@@ -357,7 +380,8 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 		{
 			// Refraction
 			const float3 R = refract(ray.Direction, surface.N, 1 - surface.material.refraction);
-			ray.Direction = lerp(R, sample_hemisphere_cos(R, rng), surface.roughnessBRDF);
+			float roughnessBRDF = sqr(clamp(surface.roughness, 0.045, 1));
+			ray.Direction = lerp(R, sample_hemisphere_cos(R, rng), roughnessBRDF);
 			energy *= surface.albedo / max(0.001, surface.transmission);
 
 			// Add a new bounce iteration, otherwise the transparent effect can disappear:
@@ -389,14 +413,13 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 
 	}
 
-	// Pre-clear result texture for first accumulation sample:
-	if (xTraceSampleIndex == 0)
-	{
-		output[pixel] = 0;
-		output_albedo[pixel] = 0;
-		output_normal[pixel] = 0;
-	}
 	output[pixel] = lerp(output[pixel], float4(result, 1), xTraceAccumulationFactor);
 	output_albedo[pixel] = lerp(output_albedo[pixel], float4(primary_albedo, 1), xTraceAccumulationFactor);
 	output_normal[pixel] = lerp(output_normal[pixel], float4(primary_normal, 1), xTraceAccumulationFactor);
+
+	if (xTraceSampleIndex == 0)
+	{
+		output_depth[pixel] = depth;
+		output_stencil[pixel] = stencil;
+	}
 }

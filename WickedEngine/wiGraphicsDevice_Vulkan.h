@@ -2,9 +2,9 @@
 #include "CommonInclude.h"
 #include "wiPlatform.h"
 
-#ifndef PLATFORM_UWP
+#if defined(PLATFORM_WINDOWS_DESKTOP) || defined(PLATFORM_LINUX)
 #define WICKEDENGINE_BUILD_VULKAN
-#endif // PLATFORM_UWP
+#endif // PLATFORM_WINDOWS_DESKTOP || PLATFORM_LINUX
 
 #ifdef WICKEDENGINE_BUILD_VULKAN
 #include "wiGraphicsDevice.h"
@@ -37,39 +37,55 @@ namespace wi::graphics
 	    VkDebugUtilsMessengerEXT debugUtilsMessenger = VK_NULL_HANDLE;
 		VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 		VkDevice device = VK_NULL_HANDLE;
-		wi::vector<VkQueueFamilyProperties> queueFamilies;
+		wi::vector<VkQueueFamilyProperties2> queueFamilies;
+		wi::vector<VkQueueFamilyVideoPropertiesKHR> queueFamiliesVideo;
 		uint32_t graphicsFamily = VK_QUEUE_FAMILY_IGNORED;
 		uint32_t computeFamily = VK_QUEUE_FAMILY_IGNORED;
 		uint32_t copyFamily = VK_QUEUE_FAMILY_IGNORED;
+		uint32_t videoFamily = VK_QUEUE_FAMILY_IGNORED;
 		wi::vector<uint32_t> families;
 		VkQueue graphicsQueue = VK_NULL_HANDLE;
 		VkQueue computeQueue = VK_NULL_HANDLE;
 		VkQueue copyQueue = VK_NULL_HANDLE;
+		VkQueue videoQueue = VK_NULL_HANDLE;
 
 		VkPhysicalDeviceProperties2 properties2 = {};
 		VkPhysicalDeviceVulkan11Properties properties_1_1 = {};
 		VkPhysicalDeviceVulkan12Properties properties_1_2 = {};
+		VkPhysicalDeviceVulkan13Properties properties_1_3 = {};
 		VkPhysicalDeviceSamplerFilterMinmaxProperties sampler_minmax_properties = {};
 		VkPhysicalDeviceAccelerationStructurePropertiesKHR acceleration_structure_properties = {};
 		VkPhysicalDeviceRayTracingPipelinePropertiesKHR raytracing_properties = {};
 		VkPhysicalDeviceFragmentShadingRatePropertiesKHR fragment_shading_rate_properties = {};
-		VkPhysicalDeviceMeshShaderPropertiesNV mesh_shader_properties = {};
+		VkPhysicalDeviceMeshShaderPropertiesEXT mesh_shader_properties = {};
 		VkPhysicalDeviceMemoryProperties2 memory_properties_2 = {};
 		VkPhysicalDeviceDepthStencilResolveProperties depth_stencil_resolve_properties = {};
 
 		VkPhysicalDeviceFeatures2 features2 = {};
 		VkPhysicalDeviceVulkan11Features features_1_1 = {};
 		VkPhysicalDeviceVulkan12Features features_1_2 = {};
+		VkPhysicalDeviceVulkan13Features features_1_3 = {};
 		VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure_features = {};
 		VkPhysicalDeviceRayTracingPipelineFeaturesKHR raytracing_features = {};
 		VkPhysicalDeviceRayQueryFeaturesKHR raytracing_query_features = {};
 		VkPhysicalDeviceFragmentShadingRateFeaturesKHR fragment_shading_rate_features = {};
-		VkPhysicalDeviceMeshShaderFeaturesNV mesh_shader_features = {};
 		VkPhysicalDeviceConditionalRenderingFeaturesEXT conditional_rendering_features = {};
 		VkPhysicalDeviceDepthClipEnableFeaturesEXT depth_clip_enable_features = {};
+		VkPhysicalDeviceMeshShaderFeaturesEXT mesh_shader_features = {};
+
+		VkVideoDecodeH264ProfileInfoKHR decode_h264_profile = {};
+		VkVideoDecodeH264CapabilitiesKHR decode_h264_capabilities = {};
+		struct VideoCapability
+		{
+			VkVideoProfileInfoKHR profile = {};
+			VkVideoDecodeCapabilitiesKHR decode_capabilities = {};
+			VkVideoCapabilitiesKHR video_capabilities = {};
+		};
+		VideoCapability video_capability_h264 = {};
 
 		wi::vector<VkDynamicState> pso_dynamicStates;
 		VkPipelineDynamicStateCreateInfo dynamicStateInfo = {};
+		VkPipelineDynamicStateCreateInfo dynamicStateInfo_MeshShader = {};
 
 		VkBuffer		nullBuffer = VK_NULL_HANDLE;
 		VmaAllocation	nullBufferAllocation = VK_NULL_HANDLE;
@@ -92,19 +108,16 @@ namespace wi::graphics
 		struct CommandQueue
 		{
 			VkQueue queue = VK_NULL_HANDLE;
-			VkSemaphore semaphore = VK_NULL_HANDLE;
 			wi::vector<SwapChain> swapchain_updates;
 			wi::vector<VkSwapchainKHR> submit_swapchains;
 			wi::vector<uint32_t> submit_swapChainImageIndices;
-			wi::vector<VkPipelineStageFlags> submit_waitStages;
-			wi::vector<VkSemaphore> submit_waitSemaphores;
-			wi::vector<uint64_t> submit_waitValues;
+			wi::vector<VkSemaphoreSubmitInfo> submit_waitSemaphoreInfos;
 			wi::vector<VkSemaphore> submit_signalSemaphores;
-			wi::vector<uint64_t> submit_signalValues;
-			wi::vector<VkCommandBuffer> submit_cmds;
+			wi::vector<VkSemaphoreSubmitInfo> submit_signalSemaphoreInfos;
+			wi::vector<VkCommandBufferSubmitInfo> submit_cmds;
 
 			bool sparse_binding_supported = false;
-			std::mutex sparse_mutex;
+			std::shared_ptr<std::mutex> locker;
 
 			void submit(GraphicsDevice_Vulkan* device, VkFence fence);
 
@@ -113,43 +126,29 @@ namespace wi::graphics
 		struct CopyAllocator
 		{
 			GraphicsDevice_Vulkan* device = nullptr;
-			VkSemaphore semaphore = VK_NULL_HANDLE;
-			uint64_t fenceValue = 0;
 			std::mutex locker;
 
 			struct CopyCMD
 			{
-				VkCommandPool commandPool = VK_NULL_HANDLE;
-				VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
-				uint64_t target = 0;
+				VkCommandPool transferCommandPool = VK_NULL_HANDLE;
+				VkCommandBuffer transferCommandBuffer = VK_NULL_HANDLE;
+				VkCommandPool transitionCommandPool = VK_NULL_HANDLE;
+				VkCommandBuffer transitionCommandBuffer = VK_NULL_HANDLE;
+				VkFence fence = VK_NULL_HANDLE;
+				VkSemaphore semaphores[3] = { VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE }; // graphics, compute, video
 				GPUBuffer uploadbuffer;
+				inline bool IsValid() const { return transferCommandBuffer != VK_NULL_HANDLE; }
 			};
-			wi::vector<CopyCMD> freelist; // available
-			wi::vector<CopyCMD> worklist; // in progress
-			wi::vector<VkCommandBuffer> submit_cmds; // for next submit
-			uint64_t submit_wait = 0; // last submit wait value
+			wi::vector<CopyCMD> freelist;
 
 			void init(GraphicsDevice_Vulkan* device);
 			void destroy();
 			CopyCMD allocate(uint64_t staging_size);
 			void submit(CopyCMD cmd);
-			uint64_t flush();
 		};
 		mutable CopyAllocator copyAllocator;
 
-		mutable std::mutex initLocker;
-		mutable bool submit_inits = false;
-
-		struct FrameResources
-		{
-			VkFence fence[QUEUE_COUNT] = {};
-
-			VkCommandPool initCommandPool = VK_NULL_HANDLE;
-			VkCommandBuffer initCommandBuffer = VK_NULL_HANDLE;
-		};
-		FrameResources frames[BUFFERCOUNT];
-		const FrameResources& GetFrameResources() const { return frames[GetBufferIndex()]; }
-		FrameResources& GetFrameResources() { return frames[GetBufferIndex()]; }
+		VkFence frame_fence[BUFFERCOUNT][QUEUE_COUNT] = {};
 
 		struct DescriptorBinder
 		{
@@ -195,6 +194,7 @@ namespace wi::graphics
 
 		struct CommandList_Vulkan
 		{
+			VkSemaphore semaphore = VK_NULL_HANDLE;
 			VkCommandPool commandPools[BUFFERCOUNT][QUEUE_COUNT] = {};
 			VkCommandBuffer commandBuffers[BUFFERCOUNT][QUEUE_COUNT] = {};
 			uint32_t buffer_index = 0;
@@ -213,17 +213,17 @@ namespace wi::graphics
 			const PipelineState* active_pso = {};
 			const Shader* active_cs = {};
 			const RaytracingPipelineState* active_rt = {};
-			const RenderPass* active_renderpass = {};
 			ShadingRate prev_shadingrate = {};
 			wi::vector<SwapChain> prev_swapchains;
-			uint32_t vb_strides[8] = {};
-			size_t vb_hash = {};
 			bool dirty_pso = {};
-			wi::vector<VkMemoryBarrier> frame_memoryBarriers;
-			wi::vector<VkImageMemoryBarrier> frame_imageBarriers;
-			wi::vector<VkBufferMemoryBarrier> frame_bufferBarriers;
+			wi::vector<VkMemoryBarrier2> frame_memoryBarriers;
+			wi::vector<VkImageMemoryBarrier2> frame_imageBarriers;
+			wi::vector<VkBufferMemoryBarrier2> frame_bufferBarriers;
 			wi::vector<VkAccelerationStructureGeometryKHR> accelerationstructure_build_geometries;
 			wi::vector<VkAccelerationStructureBuildRangeInfoKHR> accelerationstructure_build_ranges;
+			RenderPassInfo renderpass_info;
+			wi::vector<VkImageMemoryBarrier2> renderpass_barriers_begin;
+			wi::vector<VkImageMemoryBarrier2> renderpass_barriers_end;
 
 			void reset(uint32_t bufferindex)
 			{
@@ -236,22 +236,19 @@ namespace wi::graphics
 				active_pso = nullptr;
 				active_cs = nullptr;
 				active_rt = nullptr;
-				active_renderpass = nullptr;
 				dirty_pso = false;
 				prev_shadingrate = ShadingRate::RATE_INVALID;
-				vb_hash = 0;
-				for (int i = 0; i < arraysize(vb_strides); ++i)
-				{
-					vb_strides[i] = 0;
-				}
 				prev_swapchains.clear();
+				renderpass_info = {};
+				renderpass_barriers_begin.clear();
+				renderpass_barriers_end.clear();
 			}
 
-			inline VkCommandPool GetCommandPool() const
+			constexpr VkCommandPool GetCommandPool() const
 			{
 				return commandPools[buffer_index][queue];
 			}
-			inline VkCommandBuffer GetCommandBuffer() const
+			constexpr VkCommandBuffer GetCommandBuffer() const
 			{
 				return commandBuffers[buffer_index][queue];
 			}
@@ -288,22 +285,22 @@ namespace wi::graphics
 		wi::vector<VkSampler> immutable_samplers;
 
 	public:
-		GraphicsDevice_Vulkan(wi::platform::window_type window, ValidationMode validationMode = ValidationMode::Disabled);
+		GraphicsDevice_Vulkan(wi::platform::window_type window, ValidationMode validationMode = ValidationMode::Disabled, GPUPreference preference = GPUPreference::Discrete);
 		~GraphicsDevice_Vulkan() override;
 
 		bool CreateSwapChain(const SwapChainDesc* desc, wi::platform::window_type window, SwapChain* swapchain) const override;
-		bool CreateBuffer(const GPUBufferDesc* desc, const void* initial_data, GPUBuffer* buffer) const override;
+		bool CreateBuffer2(const GPUBufferDesc* desc, const std::function<void(void*)>& init_callback, GPUBuffer* buffer) const override;
 		bool CreateTexture(const TextureDesc* desc, const SubresourceData* initial_data, Texture* texture) const override;
 		bool CreateShader(ShaderStage stage, const void* shadercode, size_t shadercode_size, Shader* shader) const override;
 		bool CreateSampler(const SamplerDesc* desc, Sampler* sampler) const override;
 		bool CreateQueryHeap(const GPUQueryHeapDesc* desc, GPUQueryHeap* queryheap) const override;
-		bool CreatePipelineState(const PipelineStateDesc* desc, PipelineState* pso) const override;
-		bool CreateRenderPass(const RenderPassDesc* desc, RenderPass* renderpass) const override;
+		bool CreatePipelineState(const PipelineStateDesc* desc, PipelineState* pso, const RenderPassInfo* renderpass_info = nullptr) const override;
 		bool CreateRaytracingAccelerationStructure(const RaytracingAccelerationStructureDesc* desc, RaytracingAccelerationStructure* bvh) const override;
 		bool CreateRaytracingPipelineState(const RaytracingPipelineStateDesc* desc, RaytracingPipelineState* rtpso) const override;
-		
-		int CreateSubresource(Texture* texture, SubresourceType type, uint32_t firstSlice, uint32_t sliceCount, uint32_t firstMip, uint32_t mipCount, const Format* format_change = nullptr) const override;
-		int CreateSubresource(GPUBuffer* buffer, SubresourceType type, uint64_t offset, uint64_t size = ~0, const Format* format_change = nullptr) const override;
+		bool CreateVideoDecoder(const VideoDesc* desc, VideoDecoder* video_decoder) const override;
+
+		int CreateSubresource(Texture* texture, SubresourceType type, uint32_t firstSlice, uint32_t sliceCount, uint32_t firstMip, uint32_t mipCount, const Format* format_change = nullptr, const ImageAspect* aspect = nullptr, const Swizzle* swizzle = nullptr) const override;
+		int CreateSubresource(GPUBuffer* buffer, SubresourceType type, uint64_t offset, uint64_t size = ~0, const Format* format_change = nullptr, const uint32_t* structuredbuffer_stride_change = nullptr) const override;
 
 		int GetDescriptorIndex(const GPUResource* resource, SubresourceType type, int subresource = -1) const override;
 		int GetDescriptorIndex(const Sampler* sampler) const override;
@@ -312,7 +309,8 @@ namespace wi::graphics
 		void WriteTopLevelAccelerationStructureInstance(const RaytracingAccelerationStructureDesc::TopLevel::Instance* instance, void* dest) const override;
 		void WriteShaderIdentifier(const RaytracingPipelineState* rtpso, uint32_t group_index, void* dest) const override;
 
-		void SetName(GPUResource* pResource, const char* name) override;
+		void SetName(GPUResource* pResource, const char* name) const override;
+		void SetName(Shader* shader, const char* name) const override;
 
 		CommandList BeginCommandList(QUEUE_TYPE queue = QUEUE_GRAPHICS) override;
 		void SubmitCommandLists() override;
@@ -335,11 +333,11 @@ namespace wi::graphics
 			{
 				alignment = std::max(alignment, properties2.properties.limits.minUniformBufferOffsetAlignment);
 			}
-			if (desc->format == Format::UNKNOWN)
+			if (has_flag(desc->misc_flags, ResourceMiscFlag::BUFFER_RAW) || has_flag(desc->misc_flags, ResourceMiscFlag::BUFFER_STRUCTURED))
 			{
 				alignment = std::max(alignment, properties2.properties.limits.minStorageBufferOffsetAlignment);
 			}
-			else
+			if (desc->format != Format::UNKNOWN || has_flag(desc->misc_flags, ResourceMiscFlag::TYPED_FORMAT_CASTING))
 			{
 				alignment = std::max(alignment, properties2.properties.limits.minTexelBufferOffsetAlignment);
 			}
@@ -370,7 +368,7 @@ namespace wi::graphics
 
 		void WaitCommandList(CommandList cmd, CommandList wait_for) override;
 		void RenderPassBegin(const SwapChain* swapchain, CommandList cmd) override;
-		void RenderPassBegin(const RenderPass* renderpass, CommandList cmd) override;
+		void RenderPassBegin(const RenderPassImage* images, uint32_t image_count, CommandList cmd, RenderPassFlags flags = RenderPassFlags::NONE) override;
 		void RenderPassEnd(CommandList cmd) override;
 		void BindScissorRects(uint32_t numRects, const Rect* rects, CommandList cmd) override;
 		void BindViewports(uint32_t NumViewports, const Viewport *pViewports, CommandList cmd) override;
@@ -400,8 +398,10 @@ namespace wi::graphics
 		void DispatchIndirect(const GPUBuffer* args, uint64_t args_offset, CommandList cmd) override;
 		void DispatchMesh(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ, CommandList cmd) override;
 		void DispatchMeshIndirect(const GPUBuffer* args, uint64_t args_offset, CommandList cmd) override;
+		void DispatchMeshIndirectCount(const GPUBuffer* args, uint64_t args_offset, const GPUBuffer* count, uint64_t count_offset, uint32_t max_count, CommandList cmd) override;
 		void CopyResource(const GPUResource* pDst, const GPUResource* pSrc, CommandList cmd) override;
 		void CopyBuffer(const GPUBuffer* pDst, uint64_t dst_offset, const GPUBuffer* pSrc, uint64_t src_offset, uint64_t size, CommandList cmd) override;
+		void CopyTexture(const Texture* dst, uint32_t dstX, uint32_t dstY, uint32_t dstZ, uint32_t dstMip, uint32_t dstSlice, const Texture* src, uint32_t srcMip, uint32_t srcSlice, CommandList cmd, const Box* srcbox, ImageAspect dst_aspect, ImageAspect src_aspect) override;
 		void QueryBegin(const GPUQueryHeap* heap, uint32_t index, CommandList cmd) override;
 		void QueryEnd(const GPUQueryHeap* heap, uint32_t index, CommandList cmd) override;
 		void QueryResolve(const GPUQueryHeap* heap, uint32_t index, uint32_t count, const GPUBuffer* dest, uint64_t dest_offset, CommandList cmd) override;
@@ -414,10 +414,16 @@ namespace wi::graphics
 		void PredicationBegin(const GPUBuffer* buffer, uint64_t offset, PredicationOp op, CommandList cmd) override;
 		void PredicationEnd(CommandList cmd) override;
 		void ClearUAV(const GPUResource* resource, uint32_t value, CommandList cmd) override;
+		void VideoDecode(const VideoDecoder* video_decoder, const VideoDecodeOperation* op, CommandList cmd) override;
 
 		void EventBegin(const char* name, CommandList cmd) override;
 		void EventEnd(CommandList cmd) override;
 		void SetMarker(const char* name, CommandList cmd) override;
+
+		RenderPassInfo GetRenderPassInfo(CommandList cmd) override
+		{
+			return GetCommandList(cmd).renderpass_info;
+		}
 
 		GPULinearAllocator& GetFrameAllocator(CommandList cmd) override
 		{
@@ -427,6 +433,7 @@ namespace wi::graphics
 		struct AllocationHandler
 		{
 			VmaAllocator allocator = VK_NULL_HANDLE;
+			VmaAllocator externalAllocator = VK_NULL_HANDLE;
 			VkDevice device = VK_NULL_HANDLE;
 			VkInstance instance;
 			uint64_t framecount = 0;
@@ -442,7 +449,7 @@ namespace wi::graphics
 
 				void init(VkDevice device, VkDescriptorType type, uint32_t descriptorCount)
 				{
-					descriptorCount = std::min(descriptorCount, 100000u);
+					descriptorCount = std::min(descriptorCount, 500000u);
 
 					VkDescriptorPoolSize poolSize = {};
 					poolSize.type = type;
@@ -557,12 +564,12 @@ namespace wi::graphics
 			std::deque<std::pair<VkShaderModule, uint64_t>> destroyer_shadermodules;
 			std::deque<std::pair<VkPipelineLayout, uint64_t>> destroyer_pipelineLayouts;
 			std::deque<std::pair<VkPipeline, uint64_t>> destroyer_pipelines;
-			std::deque<std::pair<VkRenderPass, uint64_t>> destroyer_renderpasses;
-			std::deque<std::pair<VkFramebuffer, uint64_t>> destroyer_framebuffers;
 			std::deque<std::pair<VkQueryPool, uint64_t>> destroyer_querypools;
 			std::deque<std::pair<VkSwapchainKHR, uint64_t>> destroyer_swapchains;
 			std::deque<std::pair<VkSurfaceKHR, uint64_t>> destroyer_surfaces;
 			std::deque<std::pair<VkSemaphore, uint64_t>> destroyer_semaphores;
+			std::deque<std::pair<VkVideoSessionKHR, uint64_t>> destroyer_video_sessions;
+			std::deque<std::pair<VkVideoSessionParametersKHR, uint64_t>> destroyer_video_session_parameters;
 			std::deque<std::pair<int, uint64_t>> destroyer_bindlessSampledImages;
 			std::deque<std::pair<int, uint64_t>> destroyer_bindlessUniformTexelBuffers;
 			std::deque<std::pair<int, uint64_t>> destroyer_bindlessStorageBuffers;
@@ -582,6 +589,7 @@ namespace wi::graphics
 				bindlessAccelerationStructures.destroy(device);
 				Update(~0, 0); // destroy all remaining
 				vmaDestroyAllocator(allocator);
+				vmaDestroyAllocator(externalAllocator);
 				vkDestroyDevice(device, nullptr);
 				vkDestroyInstance(instance, nullptr);
 			}
@@ -589,346 +597,104 @@ namespace wi::graphics
 			// Deferred destroy of resources that the GPU is already finished with:
 			void Update(uint64_t FRAMECOUNT, uint32_t BUFFERCOUNT)
 			{
-				destroylocker.lock();
+				const auto destroy = [&](auto&& queue, auto&& handler) {
+					while (!queue.empty()) {
+						if (queue.front().second + BUFFERCOUNT < FRAMECOUNT)
+						{
+							auto item = queue.front();
+							queue.pop_front();
+							handler(item.first);
+						}
+						else
+						{
+							break;
+						}
+					}
+				};
+
 				framecount = FRAMECOUNT;
-				while (!destroyer_allocations.empty())
-				{
-					if (destroyer_allocations.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_allocations.front();
-						destroyer_allocations.pop_front();
-						vmaFreeMemory(allocator, item.first);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_images.empty())
-				{
-					if (destroyer_images.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_images.front();
-						destroyer_images.pop_front();
-						vmaDestroyImage(allocator, item.first.first, item.first.second);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_imageviews.empty())
-				{
-					if (destroyer_imageviews.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_imageviews.front();
-						destroyer_imageviews.pop_front();
-						vkDestroyImageView(device, item.first, nullptr);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_buffers.empty())
-				{
-					if (destroyer_buffers.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_buffers.front();
-						destroyer_buffers.pop_front();
-						vmaDestroyBuffer(allocator, item.first.first, item.first.second);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_bufferviews.empty())
-				{
-					if (destroyer_bufferviews.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_bufferviews.front();
-						destroyer_bufferviews.pop_front();
-						vkDestroyBufferView(device, item.first, nullptr);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_bvhs.empty())
-				{
-					if (destroyer_bvhs.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_bvhs.front();
-						destroyer_bvhs.pop_front();
-						vkDestroyAccelerationStructureKHR(device, item.first, nullptr);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_samplers.empty())
-				{
-					if (destroyer_samplers.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_samplers.front();
-						destroyer_samplers.pop_front();
-						vkDestroySampler(device, item.first, nullptr);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_descriptorPools.empty())
-				{
-					if (destroyer_descriptorPools.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_descriptorPools.front();
-						destroyer_descriptorPools.pop_front();
-						vkDestroyDescriptorPool(device, item.first, nullptr);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_descriptorSetLayouts.empty())
-				{
-					if (destroyer_descriptorSetLayouts.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_descriptorSetLayouts.front();
-						destroyer_descriptorSetLayouts.pop_front();
-						vkDestroyDescriptorSetLayout(device, item.first, nullptr);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_descriptorUpdateTemplates.empty())
-				{
-					if (destroyer_descriptorUpdateTemplates.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_descriptorUpdateTemplates.front();
-						destroyer_descriptorUpdateTemplates.pop_front();
-						vkDestroyDescriptorUpdateTemplate(device, item.first, nullptr);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_shadermodules.empty())
-				{
-					if (destroyer_shadermodules.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_shadermodules.front();
-						destroyer_shadermodules.pop_front();
-						vkDestroyShaderModule(device, item.first, nullptr);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_pipelineLayouts.empty())
-				{
-					if (destroyer_pipelineLayouts.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_pipelineLayouts.front();
-						destroyer_pipelineLayouts.pop_front();
-						vkDestroyPipelineLayout(device, item.first, nullptr);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_pipelines.empty())
-				{
-					if (destroyer_pipelines.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_pipelines.front();
-						destroyer_pipelines.pop_front();
-						vkDestroyPipeline(device, item.first, nullptr);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_renderpasses.empty())
-				{
-					if (destroyer_renderpasses.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_renderpasses.front();
-						destroyer_renderpasses.pop_front();
-						vkDestroyRenderPass(device, item.first, nullptr);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_framebuffers.empty())
-				{
-					if (destroyer_framebuffers.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_framebuffers.front();
-						destroyer_framebuffers.pop_front();
-						vkDestroyFramebuffer(device, item.first, nullptr);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_querypools.empty())
-				{
-					if (destroyer_querypools.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_querypools.front();
-						destroyer_querypools.pop_front();
-						vkDestroyQueryPool(device, item.first, nullptr);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_swapchains.empty())
-				{
-					if (destroyer_swapchains.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_swapchains.front();
-						destroyer_swapchains.pop_front();
-						vkDestroySwapchainKHR(device, item.first, nullptr);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_surfaces.empty())
-				{
-					if (destroyer_surfaces.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_surfaces.front();
-						destroyer_surfaces.pop_front();
-						vkDestroySurfaceKHR(instance, item.first, nullptr);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_semaphores.empty())
-				{
-					if (destroyer_semaphores.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						auto item = destroyer_semaphores.front();
-						destroyer_semaphores.pop_front();
-						vkDestroySemaphore(device, item.first, nullptr);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_bindlessSampledImages.empty())
-				{
-					if (destroyer_bindlessSampledImages.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						int index = destroyer_bindlessSampledImages.front().first;
-						destroyer_bindlessSampledImages.pop_front();
-						bindlessSampledImages.free(index);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_bindlessUniformTexelBuffers.empty())
-				{
-					if (destroyer_bindlessUniformTexelBuffers.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						int index = destroyer_bindlessUniformTexelBuffers.front().first;
-						destroyer_bindlessUniformTexelBuffers.pop_front();
-						bindlessUniformTexelBuffers.free(index);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_bindlessStorageBuffers.empty())
-				{
-					if (destroyer_bindlessStorageBuffers.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						int index = destroyer_bindlessStorageBuffers.front().first;
-						destroyer_bindlessStorageBuffers.pop_front();
-						bindlessStorageBuffers.free(index);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_bindlessStorageImages.empty())
-				{
-					if (destroyer_bindlessStorageImages.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						int index = destroyer_bindlessStorageImages.front().first;
-						destroyer_bindlessStorageImages.pop_front();
-						bindlessStorageImages.free(index);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_bindlessStorageTexelBuffers.empty())
-				{
-					if (destroyer_bindlessStorageTexelBuffers.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						int index = destroyer_bindlessStorageTexelBuffers.front().first;
-						destroyer_bindlessStorageTexelBuffers.pop_front();
-						bindlessStorageTexelBuffers.free(index);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_bindlessSamplers.empty())
-				{
-					if (destroyer_bindlessSamplers.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						int index = destroyer_bindlessSamplers.front().first;
-						destroyer_bindlessSamplers.pop_front();
-						bindlessSamplers.free(index);
-					}
-					else
-					{
-						break;
-					}
-				}
-				while (!destroyer_bindlessAccelerationStructures.empty())
-				{
-					if (destroyer_bindlessAccelerationStructures.front().second + BUFFERCOUNT < FRAMECOUNT)
-					{
-						int index = destroyer_bindlessAccelerationStructures.front().first;
-						destroyer_bindlessAccelerationStructures.pop_front();
-						bindlessAccelerationStructures.free(index);
-					}
-					else
-					{
-						break;
-					}
-				}
+
+				destroylocker.lock();
+
+				destroy(destroyer_allocations, [&](auto& item) {
+					vmaFreeMemory(allocator, item);
+				});
+				destroy(destroyer_images, [&](auto& item) {
+					vmaDestroyImage(allocator, item.first, item.second);
+				});
+				destroy(destroyer_imageviews, [&](auto& item) {
+					vkDestroyImageView(device, item, nullptr);
+				});
+				destroy(destroyer_buffers, [&](auto& item) {
+					vmaDestroyBuffer(allocator, item.first, item.second);
+				});
+				destroy(destroyer_bufferviews, [&](auto& item) {
+					vkDestroyBufferView(device, item, nullptr);
+				});
+				destroy(destroyer_bvhs, [&](auto& item) {
+					vkDestroyAccelerationStructureKHR(device, item, nullptr);
+				});
+				destroy(destroyer_samplers, [&](auto& item) {
+					vkDestroySampler(device, item, nullptr);
+				});
+				destroy(destroyer_descriptorPools, [&](auto& item) {
+					vkDestroyDescriptorPool(device, item, nullptr);
+				});
+				destroy(destroyer_descriptorSetLayouts, [&](auto& item) {
+					vkDestroyDescriptorSetLayout(device, item, nullptr);
+				});
+				destroy(destroyer_descriptorUpdateTemplates, [&](auto& item) {
+					vkDestroyDescriptorUpdateTemplate(device, item, nullptr);
+				});
+				destroy(destroyer_shadermodules, [&](auto& item) {
+					vkDestroyShaderModule(device, item, nullptr);
+				});
+				destroy(destroyer_pipelineLayouts, [&](auto& item) {
+					vkDestroyPipelineLayout(device, item, nullptr);
+				});
+				destroy(destroyer_pipelines, [&](auto& item) {
+					vkDestroyPipeline(device, item, nullptr);
+				});
+				destroy(destroyer_querypools, [&](auto& item) {
+					vkDestroyQueryPool(device, item, nullptr);
+				});
+				destroy(destroyer_swapchains, [&](auto& item) {
+					vkDestroySwapchainKHR(device, item, nullptr);
+				});
+				destroy(destroyer_surfaces, [&](auto& item) {
+					vkDestroySurfaceKHR(instance, item, nullptr);
+				});
+				destroy(destroyer_semaphores, [&](auto& item) {
+					vkDestroySemaphore(device, item, nullptr);
+				});
+				destroy(destroyer_video_sessions, [&](auto& item) {
+					vkDestroyVideoSessionKHR(device, item, nullptr);
+				});
+				destroy(destroyer_video_session_parameters, [&](auto& item) {
+					vkDestroyVideoSessionParametersKHR(device, item, nullptr);
+				});
+				destroy(destroyer_bindlessSampledImages, [&](auto& item) {
+					bindlessSampledImages.free(item);
+				});
+				destroy(destroyer_bindlessUniformTexelBuffers, [&](auto& item) {
+					bindlessUniformTexelBuffers.free(item);
+				});
+				destroy(destroyer_bindlessStorageBuffers, [&](auto& item) {
+					bindlessStorageBuffers.free(item);
+				});
+				destroy(destroyer_bindlessStorageImages, [&](auto& item) {
+					bindlessStorageImages.free(item);
+				});
+				destroy(destroyer_bindlessStorageTexelBuffers, [&](auto& item) {
+					bindlessStorageTexelBuffers.free(item);
+				});
+				destroy(destroyer_bindlessSamplers, [&](auto& item) {
+					bindlessSamplers.free(item);
+				});
+				destroy(destroyer_bindlessAccelerationStructures, [&](auto& item) {
+					bindlessAccelerationStructures.free(item);
+				});
+
 				destroylocker.unlock();
 			}
 		};

@@ -55,6 +55,7 @@ namespace wi::gui
 	//	As opposed to click and other interaction types, we don't want to disable scroll on every focused widget
 	//	because that would block scrolling the parent if a child element is hovered
 	static bool scroll_allowed = true;
+	static bool typing_active = false;
 
 	void GUI::Update(const wi::Canvas& canvas, float dt)
 	{
@@ -113,7 +114,7 @@ namespace wi::gui
 	}
 	void GUI::Render(const wi::Canvas& canvas, CommandList cmd) const
 	{
-		if (!visible)
+		if (!visible || widgets.empty())
 		{
 			return;
 		}
@@ -180,14 +181,27 @@ namespace wi::gui
 		}
 		return nullptr;
 	}
-	bool GUI::HasFocus()
+	bool GUI::HasFocus() const
+	{
+		if (!visible)
+		{
+			return false;
+		}
+		if (IsTyping())
+		{
+			return true;
+		}
+
+		return focus;
+	}
+	bool GUI::IsTyping() const
 	{
 		if (!visible)
 		{
 			return false;
 		}
 
-		return focus;
+		return typing_active;
 	}
 	void GUI::SetColor(wi::Color color, int id)
 	{
@@ -208,6 +222,24 @@ namespace wi::gui
 		for (auto& widget : widgets)
 		{
 			widget->SetTheme(theme, id);
+		}
+	}
+	void GUI::ExportLocalization(wi::Localization& localization) const
+	{
+		wi::Localization& section = localization.GetSection("gui");
+		for (auto& widget : widgets)
+		{
+			widget->ExportLocalization(section);
+		}
+	}
+	void GUI::ImportLocalization(const wi::Localization& localization)
+	{
+		const wi::Localization* section = localization.CheckSection("gui");
+		if (section == nullptr)
+			return;
+		for (auto& widget : widgets)
+		{
+			widget->ImportLocalization(*section);
 		}
 	}
 
@@ -370,7 +402,8 @@ namespace wi::gui
 			{
 				scripttipFont.params = tooltipFont.params;
 				scripttipFont.params.posY += textHeightWithoutScriptTip;
-				scripttipFont.params.color = wi::Color::lerp(tooltipFont.params.color, wi::Color::Transparent(), 0.25f);
+				scripttipFont.params.color = tooltipFont.params.color;
+				scripttipFont.params.color.setA(uint8_t(float(scripttipFont.params.color.getA()) / 255.0f * 0.6f * 255));
 				scripttipFont.Draw(cmd);
 			}
 		}
@@ -391,9 +424,17 @@ namespace wi::gui
 			name = value;
 		}
 	}
-	const std::string Widget::GetText() const
+	std::string Widget::GetText() const
 	{
 		return font.GetTextA();
+	}
+	std::string Widget::GetTooltip() const
+	{
+		return tooltipFont.GetTextA();
+	}
+	void Widget::SetText(const char* value)
+	{
+		font.SetText(value);
 	}
 	void Widget::SetText(const std::string& value)
 	{
@@ -494,6 +535,55 @@ namespace wi::gui
 	wi::Color Widget::GetColor() const
 	{
 		return wi::Color::fromFloat4(sprites[GetState()].params.color);
+	}
+
+	enum LOCALIZATION_ID
+	{
+		LOCALIZATION_ID_TEXT,
+		LOCALIZATION_ID_TOOLTIP,
+	};
+	void Widget::ExportLocalization(wi::Localization& localization) const
+	{
+		if (!IsLocalizationEnabled())
+			return;
+
+		if (font.GetText().empty() && tooltipFont.GetText().empty())
+			return;
+
+		wi::Localization& section = localization.GetSection(GetName());
+		section.SetSectionHint(GetWidgetTypeName());
+
+		if (has_flag(localization_enabled, LocalizationEnabled::Text) && !font.GetText().empty())
+		{
+			section.Add(LOCALIZATION_ID_TEXT, font.GetTextA().c_str(), "text");
+		}
+		if (has_flag(localization_enabled, LocalizationEnabled::Tooltip) && !tooltipFont.GetText().empty())
+		{
+			section.Add(LOCALIZATION_ID_TOOLTIP, tooltipFont.GetTextA().c_str(), "tooltip");
+		}
+	}
+	void Widget::ImportLocalization(const wi::Localization& localization)
+	{
+		const wi::Localization* section = localization.CheckSection(GetName());
+		if (section == nullptr)
+			return;
+
+		if (has_flag(localization_enabled, LocalizationEnabled::Text))
+		{
+			const char* localized_text = section->Get(LOCALIZATION_ID_TEXT);
+			if (localized_text != nullptr)
+			{
+				SetText(localized_text);
+			}
+		}
+		if (has_flag(localization_enabled, LocalizationEnabled::Tooltip))
+		{
+			const char* localized_tooltip = section->Get(LOCALIZATION_ID_TOOLTIP);
+			if (localized_tooltip != nullptr)
+			{
+				SetTooltip(localized_tooltip);
+			}
+		}
 	}
 
 	void Widget::SetColor(wi::Color color, int id)
@@ -830,6 +920,16 @@ namespace wi::gui
 			fx.siz.x += shadow * 2;
 			fx.siz.y += shadow * 2;
 			fx.color = shadow_color;
+			if (fx.isCornerRoundingEnabled())
+			{
+				for (auto& corner_rounding : fx.corners_rounding)
+				{
+					if (corner_rounding.radius > 0)
+					{
+						corner_rounding.radius += shadow;
+					}
+				}
+			}
 			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
 		}
 
@@ -884,7 +984,7 @@ namespace wi::gui
 			scrollbar_begin = translation.y;
 			scrollbar_end = scrollbar_begin + scale.y;
 			scrollbar_size = scrollbar_end - scrollbar_begin;
-			scrollbar_granularity = std::min(1.0f, scrollbar_size / std::max(1.0f, list_length - scale.x));
+			scrollbar_granularity = std::min(1.0f, scrollbar_size / std::max(1.0f, list_length - safe_area));
 			scrollbar_length = std::max(scale.x * 2, scrollbar_size * scrollbar_granularity);
 			scrollbar_length = std::min(scrollbar_length, scale.y);
 		}
@@ -893,7 +993,7 @@ namespace wi::gui
 			scrollbar_begin = translation.x;
 			scrollbar_end = scrollbar_begin + scale.x;
 			scrollbar_size = scrollbar_end - scrollbar_begin;
-			scrollbar_granularity = std::min(1.0f, scrollbar_size / std::max(1.0f, list_length - scale.y));
+			scrollbar_granularity = std::min(1.0f, scrollbar_size / std::max(1.0f, list_length - safe_area));
 			scrollbar_length = std::max(scale.y * 2, scrollbar_size * scrollbar_granularity);
 			scrollbar_length = std::min(scrollbar_length, scale.x);
 		}
@@ -1184,6 +1284,16 @@ namespace wi::gui
 			fx.siz.x += shadow * 2;
 			fx.siz.y += shadow * 2;
 			fx.color = shadow_color;
+			if (fx.isCornerRoundingEnabled())
+			{
+				for (auto& corner_rounding : fx.corners_rounding)
+				{
+					if (corner_rounding.radius > 0)
+					{
+						corner_rounding.radius += shadow;
+					}
+				}
+			}
 			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
 		}
 
@@ -1212,6 +1322,7 @@ namespace wi::gui
 	int caret_pos = 0;
 	int caret_begin = 0;
 	int caret_delay = 0;
+	bool input_updated = false;
 	wi::Timer caret_timer;
 	void TextInputField::Create(const std::string& name)
 	{
@@ -1244,6 +1355,14 @@ namespace wi::gui
 	const std::string TextInputField::GetValue()
 	{
 		return font.GetTextA();
+	}
+	const std::string TextInputField::GetCurrentInputValue()
+	{
+		if (state == ACTIVE)
+		{
+			return font_input.GetTextA();
+		}
+		return GetValue();
 	}
 	void TextInputField::Update(const wi::Canvas& canvas, float dt)
 	{
@@ -1303,6 +1422,7 @@ namespace wi::gui
 						args.iValue = atoi(args.sValue.c_str());
 						args.fValue = (float)atof(args.sValue.c_str());
 						onInputAccepted(args);
+						typing_active = false;
 					}
 
 					Deactivate();
@@ -1339,9 +1459,10 @@ namespace wi::gui
 				}
 				else if ((clicked && !intersectsPointer) || wi::input::Press(wi::input::KEYBOARD_BUTTON_ESCAPE))
 				{
-					// cancel input 
+					// cancel input
 					font_input.text.clear();
 					Deactivate();
+					typing_active = false;
 				}
 				else if (wi::input::Down(wi::input::MOUSE_BUTTON_LEFT))
 				{
@@ -1371,12 +1492,19 @@ namespace wi::gui
 					}
 				}
 
+				if (wi::input::Down(wi::input::KEYBOARD_BUTTON_LCONTROL) && wi::input::Down((wi::input::BUTTON)'A'))
+				{
+					caret_begin = 0;
+					caret_pos = (int)font_input.GetText().size();
+				}
+
 			}
 
 			if (clicked && state == FOCUS)
 			{
 				// activate
 				SetAsActive();
+				typing_active = true; // do NOT set this inside SetAsActive() because that can be called from outside, but this bool cannot, and it could stuck
 			}
 		}
 
@@ -1414,7 +1542,21 @@ namespace wi::gui
 		if (state == ACTIVE)
 		{
 			font_input.params = font.params;
+
+			if (!cancel_input_enabled)
+			{
+				SetValue(font_input.GetTextA());
+			}
+
+			if (input_updated && onInput)
+			{
+				wi::gui::EventArgs args;
+				args.sValue = GetCurrentInputValue();
+				onInput(args);
+			}
+			input_updated = false;
 		}
+
 	}
 	void TextInputField::Render(const wi::Canvas& canvas, CommandList cmd) const
 	{
@@ -1432,6 +1574,16 @@ namespace wi::gui
 			fx.siz.x += shadow * 2;
 			fx.siz.y += shadow * 2;
 			fx.color = shadow_color;
+			if (fx.isCornerRoundingEnabled())
+			{
+				for (auto& corner_rounding : fx.corners_rounding)
+				{
+					if (corner_rounding.radius > 0)
+					{
+						corner_rounding.radius += shadow;
+					}
+				}
+			}
 			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
 		}
 
@@ -1496,8 +1648,15 @@ namespace wi::gui
 	{
 		onInputAccepted = func;
 	}
+	void TextInputField::OnInput(std::function<void(EventArgs args)> func)
+	{
+		onInput = func;
+	}
 	void TextInputField::AddInput(const wchar_t inputChar)
 	{
+		input_updated = true;
+		if (wi::input::Down(wi::input::KEYBOARD_BUTTON_LCONTROL) || wi::input::Down(wi::input::KEYBOARD_BUTTON_RCONTROL))
+			return;
 		switch (inputChar)
 		{
 		case '\b':	// BACKSPACE
@@ -1529,6 +1688,7 @@ namespace wi::gui
 	}
 	void TextInputField::DeleteFromInput(int direction)
 	{
+		input_updated = true;
 		std::wstring value_new = font_input.GetText();
 		if (caret_begin != caret_pos)
 		{
@@ -1594,14 +1754,15 @@ namespace wi::gui
 		SetName(name);
 		SetText(name);
 		OnSlide([](EventArgs args) {});
-		SetSize(XMFLOAT2(200, 40));
+		SetSize(XMFLOAT2(200, 20));
 
 		valueInputField.Create(name + "_endInputField");
+		valueInputField.SetLocalizationEnabled(LocalizationEnabled::None);
 		valueInputField.SetShadowRadius(0);
 		valueInputField.SetTooltip("Enter number to modify value even outside slider limits. Enter \"reset\" to reset slider to initial state.");
 		valueInputField.SetValue(end);
 		valueInputField.OnInputAccepted([this, start, end, defaultValue](EventArgs args) {
-			if (args.sValue.compare("reset") != std::string::npos)
+			if (args.sValue.compare("reset") == 0)
 			{
 				this->value = defaultValue;
 				this->start = start;
@@ -1770,6 +1931,16 @@ namespace wi::gui
 			fx.siz.x += shadow * 2 + 1 + valueInputField.GetSize().x;
 			fx.siz.y += shadow * 2;
 			fx.color = shadow_color;
+			if (fx.isCornerRoundingEnabled())
+			{
+				for (auto& corner_rounding : fx.corners_rounding)
+				{
+					if (corner_rounding.radius > 0)
+					{
+						corner_rounding.radius += shadow;
+					}
+				}
+			}
 			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
 		}
 
@@ -1930,6 +2101,16 @@ namespace wi::gui
 			fx.siz.x += shadow * 2;
 			fx.siz.y += shadow * 2;
 			fx.color = shadow_color;
+			if (fx.isCornerRoundingEnabled())
+			{
+				for (auto& corner_rounding : fx.corners_rounding)
+				{
+					if (corner_rounding.radius > 0)
+					{
+						corner_rounding.radius += shadow;
+					}
+				}
+			}
 			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
 		}
 
@@ -1982,6 +2163,18 @@ namespace wi::gui
 				wi::image::Draw(wi::texturehelper::getWhite(), params, cmd);
 			}
 		}
+		else if (!uncheck_text.empty())
+		{
+			wi::font::Params params;
+			params.posX = translation.x + scale.x * 0.5f;
+			params.posY = translation.y + scale.y * 0.5f;
+			params.h_align = wi::font::WIFALIGN_CENTER;
+			params.v_align = wi::font::WIFALIGN_CENTER;
+			params.size = int(scale.y);
+			params.scaling = 0.75f;
+			params.color = font.params.color;
+			wi::font::Draw(uncheck_text, params, cmd);
+		}
 
 	}
 	void CheckBox::OnClick(std::function<void(EventArgs args)> func)
@@ -2004,6 +2197,10 @@ namespace wi::gui
 	void CheckBox::SetCheckText(const std::string& text)
 	{
 		wi::helper::StringConvert(text, check_text);
+	}
+	void CheckBox::SetUnCheckText(const std::string& text)
+	{
+		wi::helper::StringConvert(text, uncheck_text);
 	}
 
 
@@ -2228,6 +2425,16 @@ namespace wi::gui
 			fx.siz.x += shadow * 2 + 1 + scale.y;
 			fx.siz.y += shadow * 2;
 			fx.color = shadow_color;
+			if (fx.isCornerRoundingEnabled())
+			{
+				for (auto& corner_rounding : fx.corners_rounding)
+				{
+					if (corner_rounding.radius > 0)
+					{
+						corner_rounding.radius += shadow;
+					}
+				}
+			}
 			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
 		}
 
@@ -2518,6 +2725,39 @@ namespace wi::gui
 		}
 		theme.font.Apply(selected_font.params);
 	}
+	void ComboBox::ExportLocalization(wi::Localization& localization) const
+	{
+		Widget::ExportLocalization(localization);
+		if (has_flag(localization_enabled, LocalizationEnabled::Items))
+		{
+			wi::Localization& section = localization.GetSection(GetName()).GetSection("items");
+			for (size_t i = 0; i < items.size(); ++i)
+			{
+				section.Add(i, items[i].name.c_str());
+			}
+		}
+	}
+	void ComboBox::ImportLocalization(const wi::Localization& localization)
+	{
+		Widget::ImportLocalization(localization);
+		if (has_flag(localization_enabled, LocalizationEnabled::Items))
+		{
+			const wi::Localization* section = localization.CheckSection(GetName());
+			if (section == nullptr)
+				return;
+			section = section->CheckSection("items");
+			if (section == nullptr)
+				return;
+			for (size_t i = 0; i < items.size(); ++i)
+			{
+				const char* localized_item_name = section->Get(i);
+				if (localized_item_name != nullptr)
+				{
+					items[i].name = localized_item_name;
+				}
+			}
+		}
+	}
 
 
 
@@ -2542,6 +2782,7 @@ namespace wi::gui
 		{
 			// Add a resizer control to the upperleft corner
 			resizeDragger_UpperLeft.Create(name + "_resize_dragger_upper_left");
+			resizeDragger_UpperLeft.SetLocalizationEnabled(LocalizationEnabled::None);
 			resizeDragger_UpperLeft.SetShadowRadius(0);
 			resizeDragger_UpperLeft.SetTooltip("Resize window");
 			resizeDragger_UpperLeft.SetText("«|»");
@@ -2564,6 +2805,7 @@ namespace wi::gui
 		{
 			// Add a resizer control to the upperleft corner
 			resizeDragger_UpperRight.Create(name + "_resize_dragger_upper_right");
+			resizeDragger_UpperRight.SetLocalizationEnabled(LocalizationEnabled::None);
 			resizeDragger_UpperRight.SetShadowRadius(0);
 			resizeDragger_UpperRight.SetTooltip("Resize window");
 			resizeDragger_UpperRight.SetText("«|»");
@@ -2586,6 +2828,7 @@ namespace wi::gui
 		{
 			// Add a resizer control to the bottom right corner
 			resizeDragger_BottomLeft.Create(name + "_resize_dragger_bottom_left");
+			resizeDragger_BottomLeft.SetLocalizationEnabled(LocalizationEnabled::None);
 			resizeDragger_BottomLeft.SetShadowRadius(0);
 			resizeDragger_BottomLeft.SetTooltip("Resize window");
 			resizeDragger_BottomLeft.SetText("«|»");
@@ -2608,6 +2851,7 @@ namespace wi::gui
 		{
 			// Add a resizer control to the bottom right corner
 			resizeDragger_BottomRight.Create(name + "_resize_dragger_bottom_right");
+			resizeDragger_BottomRight.SetLocalizationEnabled(LocalizationEnabled::None);
 			resizeDragger_BottomRight.SetShadowRadius(0);
 			resizeDragger_BottomRight.SetTooltip("Resize window");
 			resizeDragger_BottomRight.SetText("«|»");
@@ -2628,7 +2872,8 @@ namespace wi::gui
 		if (has_flag(window_controls, WindowControls::MOVE))
 		{
 			// Add a grabber onto the title bar
-			moveDragger.Create(name + "_move_dragger");
+			moveDragger.Create(name);
+			moveDragger.SetLocalizationEnabled(LocalizationEnabled::None);
 			moveDragger.SetShadowRadius(0);
 			moveDragger.SetText(name);
 			moveDragger.font.params.h_align = wi::font::WIFALIGN_LEFT;
@@ -2645,6 +2890,7 @@ namespace wi::gui
 		{
 			// Add close button to the top right corner
 			closeButton.Create(name + "_close_button");
+			closeButton.SetLocalizationEnabled(LocalizationEnabled::None);
 			closeButton.SetShadowRadius(0);
 			closeButton.SetText("x");
 			closeButton.OnClick([this](EventArgs args) {
@@ -2662,6 +2908,7 @@ namespace wi::gui
 		{
 			// Add minimize button to the top right corner
 			collapseButton.Create(name + "_collapse_button");
+			collapseButton.SetLocalizationEnabled(LocalizationEnabled::None);
 			collapseButton.SetShadowRadius(0);
 			collapseButton.SetText("-");
 			collapseButton.OnClick([this](EventArgs args) {
@@ -2679,6 +2926,7 @@ namespace wi::gui
 		{
 			// Simple title bar
 			label.Create(name);
+			label.SetLocalizationEnabled(LocalizationEnabled::None);
 			label.SetShadowRadius(0);
 			label.SetText(name);
 			label.font.params.h_align = wi::font::WIFALIGN_LEFT;
@@ -2814,7 +3062,7 @@ namespace wi::gui
 		scrollable_area.active_area.pos.y = float(scrollable_area.scissorRect.top);
 		scrollable_area.active_area.siz.x = float(scrollable_area.scissorRect.right) - float(scrollable_area.scissorRect.left);
 		scrollable_area.active_area.siz.y = float(scrollable_area.scissorRect.bottom) - float(scrollable_area.scissorRect.top);
-		
+
 
 		bool focus = false;
 		for (size_t i = 0; i < widgets.size(); ++i)
@@ -2939,6 +3187,16 @@ namespace wi::gui
 			{
 				fx.siz.y = control_size + shadow * 2;
 			}
+			if (fx.isCornerRoundingEnabled())
+			{
+				for (auto& corner_rounding : fx.corners_rounding)
+				{
+					if (corner_rounding.radius > 0)
+					{
+						corner_rounding.radius += shadow;
+					}
+				}
+			}
 			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
 		}
 
@@ -2982,7 +3240,7 @@ namespace wi::gui
 	}
 	void Window::RenderTooltip(const wi::Canvas& canvas, wi::graphics::CommandList cmd) const
 	{
-		Widget::RenderTooltip(canvas, cmd);
+		// Window base tooltip is not rendered
 		for (auto& x : widgets)
 		{
 			x->RenderTooltip(canvas, cmd);
@@ -3103,6 +3361,10 @@ namespace wi::gui
 	void Window::OnCollapse(std::function<void(EventArgs args)> func)
 	{
 		onCollapse = func;
+	}
+	void Window::OnResize(std::function<void()> func)
+	{
+		onResize = func;
 	}
 	void Window::SetColor(wi::Color color, int id)
 	{
@@ -3264,6 +3526,7 @@ namespace wi::gui
 			scrollbar_horizontal.SetSize(XMFLOAT2(GetWidgetAreaSize().x - control_size * (offset + 1), control_size));
 			scrollbar_horizontal.SetPos(XMFLOAT2(translation.x + control_size * offset, translation.y + scale.y - control_size));
 			scrollbar_horizontal.AttachTo(this);
+			scrollbar_horizontal.SetSafeArea(scrollbar_horizontal.scale.y);
 		}
 		if (scrollbar_vertical.parent != nullptr)
 		{
@@ -3276,7 +3539,41 @@ namespace wi::gui
 			scrollbar_vertical.SetSize(XMFLOAT2(control_size, GetWidgetAreaSize().y - (control_size + 1) * offset));
 			scrollbar_vertical.SetPos(XMFLOAT2(translation.x + scale.x - control_size, translation.y + 1 + control_size));
 			scrollbar_vertical.AttachTo(this);
+			scrollbar_vertical.SetSafeArea(scrollbar_vertical.scale.x);
 		}
+
+		if (onResize)
+		{
+			onResize();
+		}
+	}
+	void Window::ExportLocalization(wi::Localization& localization) const
+	{
+		Widget::ExportLocalization(localization);
+		if (has_flag(localization_enabled, LocalizationEnabled::Children))
+		{
+			wi::Localization& section = localization.GetSection(GetName());
+			for (auto& widget : widgets)
+			{
+				widget->ExportLocalization(section);
+			}
+		}
+	}
+	void Window::ImportLocalization(const wi::Localization& localization)
+	{
+		Widget::ImportLocalization(localization);
+		if (has_flag(localization_enabled, LocalizationEnabled::Children))
+		{
+			const wi::Localization* section = localization.CheckSection(GetName());
+			if (section == nullptr)
+				return;
+			for (auto& widget : widgets)
+			{
+				widget->ImportLocalization(*section);
+			}
+		}
+		label.SetText(GetText());
+		moveDragger.SetText(GetText());
 	}
 
 
@@ -3317,7 +3614,7 @@ namespace wi::gui
 			out.s = (delta / max);                  // s
 		}
 		else {
-			// if max is 0, then r = g = b = 0              
+			// if max is 0, then r = g = b = 0
 			// s = 0, h is undefined
 			out.s = 0.0f;
 			out.h = NAN;                            // its now undefined
@@ -3406,10 +3703,11 @@ namespace wi::gui
 		SetColor(wi::Color(100, 100, 100, 100));
 
 		float x = 250;
-		float y = 100;
+		float y = 80;
 		float step = 20;
 
 		text_R.Create("R");
+		text_R.SetLocalizationEnabled(LocalizationEnabled::Tooltip);
 		text_R.SetPos(XMFLOAT2(x, y += step));
 		text_R.SetSize(XMFLOAT2(40, 18));
 		text_R.SetText("");
@@ -3424,6 +3722,7 @@ namespace wi::gui
 		AddWidget(&text_R);
 
 		text_G.Create("G");
+		text_G.SetLocalizationEnabled(LocalizationEnabled::Tooltip);
 		text_G.SetPos(XMFLOAT2(x, y += step));
 		text_G.SetSize(XMFLOAT2(40, 18));
 		text_G.SetText("");
@@ -3438,6 +3737,7 @@ namespace wi::gui
 		AddWidget(&text_G);
 
 		text_B.Create("B");
+		text_B.SetLocalizationEnabled(LocalizationEnabled::Tooltip);
 		text_B.SetPos(XMFLOAT2(x, y += step));
 		text_B.SetSize(XMFLOAT2(40, 18));
 		text_B.SetText("");
@@ -3453,6 +3753,7 @@ namespace wi::gui
 
 
 		text_H.Create("H");
+		text_H.SetLocalizationEnabled(LocalizationEnabled::Tooltip);
 		text_H.SetPos(XMFLOAT2(x, y += step));
 		text_H.SetSize(XMFLOAT2(40, 18));
 		text_H.SetText("");
@@ -3465,6 +3766,7 @@ namespace wi::gui
 		AddWidget(&text_H);
 
 		text_S.Create("S");
+		text_S.SetLocalizationEnabled(LocalizationEnabled::Tooltip);
 		text_S.SetPos(XMFLOAT2(x, y += step));
 		text_S.SetSize(XMFLOAT2(40, 18));
 		text_S.SetText("");
@@ -3477,6 +3779,7 @@ namespace wi::gui
 		AddWidget(&text_S);
 
 		text_V.Create("V");
+		text_V.SetLocalizationEnabled(LocalizationEnabled::Tooltip);
 		text_V.SetPos(XMFLOAT2(x, y += step));
 		text_V.SetSize(XMFLOAT2(40, 18));
 		text_V.SetText("");
@@ -3488,7 +3791,22 @@ namespace wi::gui
 			});
 		AddWidget(&text_V);
 
+		text_hex.Create("Hex");
+		text_hex.SetLocalizationEnabled(LocalizationEnabled::Tooltip);
+		text_hex.SetPos(XMFLOAT2(x, y += step));
+		text_hex.SetSize(XMFLOAT2(80, 18));
+		text_hex.SetText("");
+		text_hex.SetTooltip("Enter RGBA hex value");
+		text_hex.SetDescription("Hex: ");
+		text_hex.OnInputAccepted([this](EventArgs args) {
+			wi::Color color(args.sValue.c_str());
+			SetPickColor(color);
+			FireEvents();
+			});
+		AddWidget(&text_hex);
+
 		alphaSlider.Create(0, 255, 255, 255, "");
+		alphaSlider.SetLocalizationEnabled(LocalizationEnabled::Tooltip);
 		alphaSlider.SetPos(XMFLOAT2(20, y));
 		alphaSlider.SetSize(XMFLOAT2(150, 18));
 		alphaSlider.SetText("A: ");
@@ -3623,6 +3941,7 @@ namespace wi::gui
 			text_H.SetValue(int(hue));
 			text_S.SetValue(int(saturation * 100));
 			text_V.SetValue(int(luminance * 100));
+			text_hex.SetText(color.to_hex());
 
 			if (dragged)
 			{
@@ -3974,8 +4293,7 @@ namespace wi::gui
 		// render preview
 		{
 			XMStoreFloat4x4(&cb.g_xTransform,
-				XMMatrixScaling(sca, sca, 1) *
-				XMMatrixTranslation(translation.x + scale.x - sca - 4, translation.y + control_size + 4, 0) *
+				XMMatrixTranslation(translation.x + scale.x - sca - 2, translation.y + control_size + 4 + 22, 0) *
 				Projection
 			);
 			cb.g_xColor = final_color.toFloat4();
@@ -4030,6 +4348,9 @@ namespace wi::gui
 		add_right(text_B);
 		add_right(text_G);
 		add_right(text_R);
+
+		y = control_size + 4;
+		add_right(text_hex);
 	}
 	wi::Color ColorPicker::GetPickColor() const
 	{
@@ -4097,6 +4418,14 @@ namespace wi::gui
 		scrollbar.sprites_knob[ScrollBar::SCROLLBAR_HOVER].params.color = wi::Color(180, 180, 180, 180);
 		scrollbar.sprites_knob[ScrollBar::SCROLLBAR_GRABBED].params.color = wi::Color::White();
 		scrollbar.SetOverScroll(0.25f);
+	}
+	bool TreeList::DoesItemHaveChildren(int index) const
+	{
+		if (items.size() <= size_t(index + 1)) // if item doesn't exist or last then no children
+			return false;
+		if (items[index].level + 1 == items[index + 1].level) // if item after index is exactly one level down, then it is its child
+			return true;
+		return false;
 	}
 	float TreeList::GetItemOffset(int index) const
 	{
@@ -4318,6 +4647,16 @@ namespace wi::gui
 			fx.siz.x += shadow * 2;
 			fx.siz.y = scale.y + shadow * 2;
 			fx.color = shadow_color;
+			if (fx.isCornerRoundingEnabled())
+			{
+				for (auto& corner_rounding : fx.corners_rounding)
+				{
+					if (corner_rounding.radius > 0)
+					{
+						corner_rounding.radius += shadow;
+					}
+				}
+			}
 			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
 		}
 
@@ -4399,6 +4738,7 @@ namespace wi::gui
 			}
 
 			// opened flag triangle:
+			if(DoesItemHaveChildren(i))
 			{
 				device->BindPipelineState(&gui_internal().PSO_colored, cmd);
 

@@ -13,7 +13,7 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 	RWByteAddressBuffer requestBuffer = bindless_rwbuffers[push.requestBufferRW];
 
 	uint page_count = 0;
-	uint lod_offsets[9];
+	uint lod_offsets[10];
 	for (uint i = 0; i < push.lodCount; ++i)
 	{
 		const uint l_width = max(1u, push.width >> i);
@@ -54,6 +54,6 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 		const uint l_width = max(1u, push.width >> lod);
 		const uint l_page_offset = lod_offsets[lod];
 		const uint l_index = l_page_offset + l_x + l_y * l_width;
-		requestBuffer.InterlockedMin(l_index * sizeof(uint), page_request);
+		requestBuffer.InterlockedMin(uint(l_index * sizeof(uint)), page_request);
 	}
 }

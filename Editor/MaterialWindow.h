@@ -1,6 +1,4 @@
 #pragma once
-#include "WickedEngine.h"
-
 class EditorComponent;
 
 class MaterialWindow : public wi::gui::Window
@@ -22,6 +20,7 @@ public:
 	wi::gui::CheckBox windCheckBox;
 	wi::gui::CheckBox doubleSidedCheckBox;
 	wi::gui::CheckBox outlineCheckBox;
+	wi::gui::CheckBox preferUncompressedCheckBox;
 	wi::gui::ComboBox shaderTypeComboBox;
 	wi::gui::ComboBox blendModeComboBox;
 	wi::gui::ComboBox shadingRateComboBox;
@@ -33,6 +32,8 @@ public:
 	wi::gui::Slider transmissionSlider;
 	wi::gui::Slider refractionSlider;
 	wi::gui::Slider pomSlider;
+	wi::gui::Slider anisotropyStrengthSlider;
+	wi::gui::Slider anisotropyRotationSlider;
 	wi::gui::Slider displacementMappingSlider;
 	wi::gui::Slider subsurfaceScatteringSlider;
 	wi::gui::Slider texAnimFrameRateSlider;

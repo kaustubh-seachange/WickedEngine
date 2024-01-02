@@ -21,6 +21,11 @@
 #define QOI_IMPLEMENTATION
 #include "qoi.h"
 
+#define MINIMP4_IMPLEMENTATION
+#include "minimp4.h"
+
+#define H264_IMPLEMENTATION
+#include "h264.h"
 
 
 // Basis Universal library sources are compiled below for simplicity:
@@ -31,9 +36,6 @@
 
 #undef _CRT_SECURE_NO_WARNINGS
 #include "basis_universal/encoder/jpgd.cpp"
-#include "basis_universal/encoder/lodepng.cpp"
-#include "basis_universal/encoder/apg_bmp.c"
-#include "basis_universal/encoder/basisu_astc_decomp.cpp"
 #include "basis_universal/encoder/basisu_backend.cpp"
 #include "basis_universal/encoder/basisu_basis_file.cpp"
 #include "basis_universal/encoder/basisu_bc7enc.cpp"
@@ -41,19 +43,16 @@
 #include "basis_universal/encoder/basisu_enc.cpp"
 #include "basis_universal/encoder/basisu_etc.cpp"
 #include "basis_universal/encoder/basisu_frontend.cpp"
-#include "basis_universal/encoder/basisu_global_selector_palette_helpers.cpp"
 #include "basis_universal/encoder/basisu_gpu_texture.cpp"
 #include "basis_universal/encoder/basisu_kernels_sse.cpp"
+#include "basis_universal/encoder/basisu_opencl.cpp"
 #include "basis_universal/encoder/basisu_pvrtc1_4.cpp"
 #include "basis_universal/encoder/basisu_resampler.cpp"
 #include "basis_universal/encoder/basisu_resample_filters.cpp"
 #include "basis_universal/encoder/basisu_ssim.cpp"
 #include "basis_universal/encoder/basisu_uastc_enc.cpp"
+#include "basis_universal/encoder/pvpngreader.cpp"
 
 #undef CLAMP
 //#include "basis_universal/zstd/zstddeclib.c"
 #include "basis_universal/zstd/zstd.c"
-
-basist::etc1_global_selector_codebook g_basis_global_codebook(basist::g_global_selector_cb_size, basist::g_global_selector_cb);
-
-

@@ -18,13 +18,14 @@ ShaderMaterial EmitterGetMaterial()
 
 struct VertextoPixel
 {
-	float4 pos						: SV_POSITION;
-	float4 tex						: TEXCOORD0;
-	nointerpolation float size		: TEXCOORD1;
-	nointerpolation uint color		: TEXCOORD2;
+	float4 pos : SV_POSITION;
+	float clip : SV_ClipDistance0;
+	min16float4 tex : TEXCOORD0;
 	float3 P : WORLDPOSITION;
-	nointerpolation float frameBlend : FRAMEBLEND;
-	float2 unrotated_uv : UNROTATED_UV;
+	min16float2 unrotated_uv : UNROTATED_UV;
+	nointerpolation min16float frameBlend : FRAMEBLEND;
+	nointerpolation min16float size : PARTICLESIZE;
+	nointerpolation uint color : PARTICLECOLOR;
 };
 
 #endif // WI_EMITTEDPARTICLE_HF

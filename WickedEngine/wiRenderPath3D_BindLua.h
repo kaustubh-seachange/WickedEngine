@@ -13,7 +13,7 @@ namespace wi::lua
 	private:
 		RenderPath3D renderpath;
 	public:
-		static const char className[];
+		inline static constexpr char className[] = "RenderPath3D";
 		static Luna<RenderPath3D_BindLua>::FunctionType methods[];
 		static Luna<RenderPath3D_BindLua>::PropertyType properties[];
 
@@ -59,6 +59,16 @@ namespace wi::lua
 		int SetOutlineThickness(lua_State* L);
 		int SetOutlineThreshold(lua_State* L);
 		int SetOutlineColor(lua_State* L);
+		int SetFSREnabled(lua_State* L);
+		int SetFSRSharpness(lua_State* L);
+		int SetFSR2Enabled(lua_State* L);
+		int SetFSR2Sharpness(lua_State* L);
+		int SetFSR2Preset(lua_State* L);
+		int SetTonemap(lua_State* L);
+		int SetCropLeft(lua_State* L);
+		int SetCropTop(lua_State* L);
+		int SetCropRight(lua_State* L);
+		int SetCropBottom(lua_State* L);
 
 		static void Bind();
 	};

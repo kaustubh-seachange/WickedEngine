@@ -8,7 +8,6 @@
 namespace wi::lua
 {
 
-	const char Application_BindLua::className[] = "Application";
 
 	Luna<Application_BindLua>::FunctionType Application_BindLua::methods[] = {
 		lunamethod(Application_BindLua, GetActivePath),
@@ -54,7 +53,7 @@ namespace wi::lua
 		RenderPath3D* comp3D = dynamic_cast<RenderPath3D*>(component->GetActivePath());
 		if (comp3D != nullptr)
 		{
-			Luna<RenderPath3D_BindLua>::push(L, new RenderPath3D_BindLua(comp3D));
+			Luna<RenderPath3D_BindLua>::push(L, comp3D);
 			return 1;
 		}
 
@@ -62,7 +61,7 @@ namespace wi::lua
 		LoadingScreen* compLoad = dynamic_cast<LoadingScreen*>(component->GetActivePath());
 		if (compLoad != nullptr)
 		{
-			Luna<LoadingScreen_BindLua>::push(L, new LoadingScreen_BindLua(compLoad));
+			Luna<LoadingScreen_BindLua>::push(L, compLoad);
 			return 1;
 		}
 
@@ -70,7 +69,7 @@ namespace wi::lua
 		RenderPath2D* comp2D = dynamic_cast<RenderPath2D*>(component->GetActivePath());
 		if (comp2D != nullptr)
 		{
-			Luna<RenderPath2D_BindLua>::push(L, new RenderPath2D_BindLua(comp2D));
+			Luna<RenderPath2D_BindLua>::push(L, comp2D);
 			return 1;
 		}
 
@@ -78,7 +77,7 @@ namespace wi::lua
 		RenderPath* comp = dynamic_cast<RenderPath*>(component->GetActivePath());
 		if (comp != nullptr)
 		{
-			Luna<RenderPath_BindLua>::push(L, new RenderPath_BindLua(comp));
+			Luna<RenderPath_BindLua>::push(L, comp);
 			return 1;
 		}
 
@@ -353,7 +352,7 @@ namespace wi::lua
 			wi::lua::SError(L, "GetCanvas() component is empty!");
 			return 0;
 		}
-		Luna<Canvas_BindLua>::push(L, new Canvas_BindLua(component->canvas));
+		Luna<Canvas_BindLua>::push(L, component->canvas);
 		return 1;
 	}
 	int Application_BindLua::SetCanvas(lua_State* L)
@@ -418,7 +417,6 @@ namespace wi::lua
 
 
 
-	const char Canvas_BindLua::className[] = "Canvas";
 
 	Luna<Canvas_BindLua>::FunctionType Canvas_BindLua::methods[] = {
 		lunamethod(Canvas_BindLua, GetDPI),

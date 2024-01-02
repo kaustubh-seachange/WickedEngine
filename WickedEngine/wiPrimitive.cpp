@@ -64,6 +64,13 @@ namespace wi::primitive
 
 		return sca * tra;
 	}
+	XMMATRIX AABB::AABB::getUnormRemapMatrix() const
+	{
+		return
+			XMMatrixScaling(_max.x - _min.x, _max.y - _min.y, _max.z - _min.z) *
+			XMMatrixTranslation(_min.x, _min.y, _min.z)
+			;
+	}
 	float AABB::getArea() const
 	{
 		XMFLOAT3 _min = getMin();
@@ -349,6 +356,18 @@ namespace wi::primitive
 		}
 		return false;
 	}
+	XMFLOAT4X4 Sphere::GetPlacementOrientation(const XMFLOAT3& position, const XMFLOAT3& normal) const
+	{
+		XMVECTOR N = XMLoadFloat3(&normal);
+		XMVECTOR P = XMLoadFloat3(&position);
+		XMVECTOR E = XMLoadFloat3(&center) - P;
+		XMVECTOR T = XMVector3Normalize(XMVector3Cross(N, P - E));
+		XMVECTOR B = XMVector3Normalize(XMVector3Cross(T, N));
+		XMMATRIX M = { T, N, B, P };
+		XMFLOAT4X4 orientation;
+		XMStoreFloat4x4(&orientation, M);
+		return orientation;
+	}
 
 
 
@@ -480,7 +499,37 @@ namespace wi::primitive
 		sphere.radius = radius;
 		return sphere.intersects(ray, dist, direction);
 	}
+	bool Capsule::intersects(const XMFLOAT3& point) const
+	{
+		XMVECTOR Base = XMLoadFloat3(&base);
+		XMVECTOR Tip = XMLoadFloat3(&tip);
+		XMVECTOR Radius = XMVectorReplicate(radius);
+		XMVECTOR Normal = XMVector3Normalize(Tip - Base);
+		XMVECTOR LineEndOffset = Normal * Radius;
+		XMVECTOR A = Base + LineEndOffset;
+		XMVECTOR B = Tip - LineEndOffset;
 
+		XMVECTOR P = XMLoadFloat3(&point);
+
+		XMVECTOR C = wi::math::ClosestPointOnLineSegment(A, B, P);
+
+		return XMVectorGetX(XMVector3Length(P - C)) <= radius;
+	}
+	XMFLOAT4X4 Capsule::GetPlacementOrientation(const XMFLOAT3& position, const XMFLOAT3& normal) const
+	{
+		const XMVECTOR Base = XMLoadFloat3(&base);
+		const XMVECTOR Tip = XMLoadFloat3(&tip);
+		const XMVECTOR Axis = XMVector3Normalize(Tip - Base);
+		XMVECTOR N = XMLoadFloat3(&normal);
+		XMVECTOR P = XMLoadFloat3(&position);
+		XMVECTOR E = Axis;
+		XMVECTOR T = XMVector3Normalize(XMVector3Cross(N, P - E));
+		XMVECTOR Binorm = XMVector3Normalize(XMVector3Cross(T, N));
+		XMMATRIX M = { T, N, Binorm, P };
+		XMFLOAT4X4 orientation;
+		XMStoreFloat4x4(&orientation, M);
+		return orientation;
+	}
 
 
 
@@ -681,6 +730,31 @@ namespace wi::primitive
 	bool Ray::intersects(const Plane& b, float& dist, XMFLOAT3& direction) const
 	{
 		return b.intersects(*this, dist, direction);
+	}
+	void Ray::CreateFromPoints(const XMFLOAT3& a, const XMFLOAT3& b)
+	{
+		XMVECTOR A = XMLoadFloat3(&a);
+		XMVECTOR B = XMLoadFloat3(&b);
+		XMVECTOR D = B - A;
+		XMVECTOR L = XMVector3Length(D);
+		D /= L;
+		XMStoreFloat3(&origin, A);
+		XMStoreFloat3(&direction, D);
+		XMStoreFloat3(&direction_inverse, XMVectorReciprocal(D));
+		TMin = 0;
+		TMax = XMVectorGetX(L);
+	}
+	XMFLOAT4X4 Ray::GetPlacementOrientation(const XMFLOAT3& position, const XMFLOAT3& normal) const
+	{
+		XMVECTOR N = XMLoadFloat3(&normal);
+		XMVECTOR P = XMLoadFloat3(&position);
+		XMVECTOR E = XMLoadFloat3(&origin);
+		XMVECTOR T = XMVector3Normalize(XMVector3Cross(N, P - E));
+		XMVECTOR B = XMVector3Normalize(XMVector3Cross(T, N));
+		XMMATRIX M = { T, N, B, P };
+		XMFLOAT4X4 orientation;
+		XMStoreFloat4x4(&orientation, M);
+		return orientation;
 	}
 
 

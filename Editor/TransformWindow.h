@@ -1,6 +1,4 @@
 #pragma once
-#include "WickedEngine.h"
-
 class EditorComponent;
 
 class TransformWindow : public wi::gui::Window
@@ -34,6 +32,10 @@ public:
 	wi::gui::TextInputField snapScaleInput;
 	wi::gui::TextInputField snapRotateInput;
 	wi::gui::TextInputField snapTranslateInput;
+
+	wi::gui::Button resetTranslationButton;
+	wi::gui::Button resetScaleButton;
+	wi::gui::Button resetRotationButton;
 
 	void ResizeLayout() override;
 };

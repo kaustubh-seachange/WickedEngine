@@ -1,6 +1,5 @@
 #include "stdafx.h"
 #include "DecalWindow.h"
-#include "Editor.h"
 
 using namespace wi::ecs;
 using namespace wi::scene;
@@ -10,7 +9,7 @@ void DecalWindow::Create(EditorComponent* _editor)
 {
 	editor = _editor;
 	wi::gui::Window::Create(ICON_DECAL " Decal", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE);
-	SetSize(XMFLOAT2(300, 180));
+	SetSize(XMFLOAT2(300, 200));
 
 	closeButton.SetTooltip("Delete DecalComponent");
 	OnClose([=](wi::gui::EventArgs args) {
@@ -40,8 +39,36 @@ void DecalWindow::Create(EditorComponent* _editor)
 
 	y += step;
 
+	onlyalphaCheckBox.Create("Alpha only basecolor: ");
+	onlyalphaCheckBox.SetSize(XMFLOAT2(hei, hei));
+	onlyalphaCheckBox.SetTooltip("You can enable this to only use alpha channel from basecolor map. Useful for blending normalmap-only decals.");
+	onlyalphaCheckBox.OnClick([=](wi::gui::EventArgs args) {
+		Scene& scene = editor->GetCurrentScene();
+		DecalComponent* decal = scene.decals.GetComponent(entity);
+		if (decal != nullptr)
+		{
+			decal->SetBaseColorOnlyAlpha(args.bValue);
+		}
+	});
+	AddWidget(&onlyalphaCheckBox);
+
+	slopeBlendPowerSlider.Create(0, 8, 0, 1000, "Slope Blend: ");
+	slopeBlendPowerSlider.SetSize(XMFLOAT2(100, hei));
+	slopeBlendPowerSlider.SetTooltip("Set a power factor for blending on surface slopes. 0 = no slope blend, increasing = more slope blend");
+	slopeBlendPowerSlider.OnSlide([=](wi::gui::EventArgs args) {
+		Scene& scene = editor->GetCurrentScene();
+		DecalComponent* decal = scene.decals.GetComponent(entity);
+		if (decal != nullptr)
+		{
+			decal->slopeBlendPower = args.fValue;
+		}
+	});
+	AddWidget(&slopeBlendPowerSlider);
+
+	y += step;
+
 	infoLabel.Create("");
-	infoLabel.SetText("Set decal properties (texture, color, etc.) in the Material window.");
+	infoLabel.SetText("Set decal properties in the Material component. Decals support the following material properties:\n - Base color\n - Base color texture\n - Emissive strength\n - Normalmap texture\n - Normalmap strength\n - Surfacemap texture\n - Texture tiling (TexMulAdd)");
 	infoLabel.SetSize(XMFLOAT2(300, 100));
 	infoLabel.SetPos(XMFLOAT2(10, y));
 	infoLabel.SetColor(wi::Color::Transparent());
@@ -64,6 +91,8 @@ void DecalWindow::SetEntity(Entity entity)
 	if (decal != nullptr)
 	{
 		SetEnabled(true);
+		onlyalphaCheckBox.SetCheck(decal->IsBaseColorOnlyAlpha());
+		slopeBlendPowerSlider.SetValue(decal->slopeBlendPower);
 	}
 	else
 	{
@@ -82,7 +111,7 @@ void DecalWindow::ResizeLayout()
 	auto add = [&](wi::gui::Widget& widget) {
 		if (!widget.IsVisible())
 			return;
-		const float margin_left = 80;
+		const float margin_left = 100;
 		const float margin_right = 40;
 		widget.SetPos(XMFLOAT2(margin_left, y));
 		widget.SetSize(XMFLOAT2(width - margin_left - margin_right, widget.GetScale().y));
@@ -110,5 +139,7 @@ void DecalWindow::ResizeLayout()
 
 	add_fullwidth(infoLabel);
 	add_right(placementCheckBox);
+	add_right(onlyalphaCheckBox);
+	add(slopeBlendPowerSlider);
 
 }

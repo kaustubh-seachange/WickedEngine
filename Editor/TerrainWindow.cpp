@@ -1,6 +1,5 @@
 #include "stdafx.h"
 #include "TerrainWindow.h"
-#include "Editor.h"
 
 #include "Utility/stb_image.h"
 
@@ -198,13 +197,13 @@ HeightmapModifierWindow::HeightmapModifierWindow() : ModifierWindow("Heightmap")
 	AddWidget(&scaleSlider);
 
 	loadButton.Create("Load Heightmap...");
-	loadButton.SetTooltip("Load a heightmap texture, where the red channel corresponds to terrain height and the resolution to dimensions.\nThe heightmap will be placed in the world center.");
+	loadButton.SetTooltip("Load a heightmap texture, where the red channel corresponds to terrain height and the resolution to dimensions.\nThe heightmap will be placed in the world center.\nIt is recommended to use a 16-bit PNG for heightmaps.");
 	loadButton.OnClick([=](wi::gui::EventArgs args) {
 
 		wi::helper::FileDialogParams params;
 		params.type = wi::helper::FileDialogParams::OPEN;
-		params.description = "Texture";
-		params.extensions = wi::resourcemanager::GetSupportedImageExtensions();
+		params.description = "*.png";
+		params.extensions = { "PNG" };
 		wi::helper::FileDialog(params, [=](std::string fileName) {
 			wi::eventhandler::Subscribe_Once(wi::eventhandler::EVENT_THREAD_SAFE_POINT, [=](uint64_t userdata) {
 
@@ -213,21 +212,29 @@ HeightmapModifierWindow::HeightmapModifierWindow() : ModifierWindow("Heightmap")
 				heightmap_modifier->width = 0;
 				heightmap_modifier->height = 0;
 				int bpp = 0;
-				stbi_uc* rgba = stbi_load(fileName.c_str(), &heightmap_modifier->width, &heightmap_modifier->height, &bpp, 1);
-				if (rgba != nullptr)
+				if (stbi_is_16_bit(fileName.c_str()))
 				{
-					heightmap_modifier->data.resize(heightmap_modifier->width * heightmap_modifier->height);
-					for (int i = 0; i < heightmap_modifier->width * heightmap_modifier->height; ++i)
+					stbi_us* rgba = stbi_load_16(fileName.c_str(), &heightmap_modifier->width, &heightmap_modifier->height, &bpp, 1); if (rgba != nullptr)
 					{
-						heightmap_modifier->data[i] = rgba[i];
+						heightmap_modifier->data.resize(heightmap_modifier->width * heightmap_modifier->height * sizeof(uint16_t));
+						std::memcpy(heightmap_modifier->data.data(), rgba, heightmap_modifier->data.size());
+						stbi_image_free(rgba);
+						generation_callback(); // callback after heightmap load confirmation
 					}
-					stbi_image_free(rgba);
-
-					generation_callback(); // callback after heightmap load confirmation
 				}
-				});
+				else
+				{
+					stbi_uc* rgba = stbi_load(fileName.c_str(), &heightmap_modifier->width, &heightmap_modifier->height, &bpp, 1);
+					if (rgba != nullptr)
+					{
+						heightmap_modifier->data.resize(heightmap_modifier->width * heightmap_modifier->height * sizeof(uint8_t));
+						std::memcpy(heightmap_modifier->data.data(), rgba, heightmap_modifier->data.size());
+						generation_callback(); // callback after heightmap load confirmation
+					}
+				}
 			});
 		});
+	});
 	AddWidget(&loadButton);
 
 	SetSize(XMFLOAT2(200, 180));
@@ -274,7 +281,7 @@ void TerrainWindow::Create(EditorComponent* _editor)
 	ClearTransform();
 
 	wi::gui::Window::Create(ICON_TERRAIN " Terrain", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE);
-	SetSize(XMFLOAT2(420, 940));
+	SetSize(XMFLOAT2(420, 980));
 
 	closeButton.SetTooltip("Delete Terrain.");
 	OnClose([=](wi::gui::EventArgs args) {
@@ -360,6 +367,16 @@ void TerrainWindow::Create(EditorComponent* _editor)
 		generate_callback();
 		});
 	AddWidget(&physicsCheckBox);
+
+	tessellationCheckBox.Create("Tessellation: ");
+	tessellationCheckBox.SetTooltip("Specify whether tessellation is enabled for terrain surface.\nTessellation requires GPU hardware support\nTessellation doesn't work with raytracing effects or Visibility Compute Shading rendering mode.");
+	tessellationCheckBox.SetSize(XMFLOAT2(hei, hei));
+	tessellationCheckBox.SetPos(XMFLOAT2(x, y += step));
+	tessellationCheckBox.SetCheck(true);
+	tessellationCheckBox.OnClick([=](wi::gui::EventArgs args) {
+		terrain->SetTessellationEnabled(args.bValue);
+		});
+	AddWidget(&tessellationCheckBox);
 
 	lodSlider.Create(0.0001f, 0.01f, 0.005f, 10000, "Mesh LOD Distance: ");
 	lodSlider.SetTooltip("Set the LOD (Level Of Detail) distance multiplier.\nLow values increase LOD detail in distance");
@@ -474,7 +491,7 @@ void TerrainWindow::Create(EditorComponent* _editor)
 		default:
 		case PRESET_HILLS:
 			terrain->weather.SetOceanEnabled(false);
-			seedSlider.SetValue(5333);
+			seedSlider.SetValue(5415);
 			bottomLevelSlider.SetValue(-60);
 			topLevelSlider.SetValue(380);
 			perlin->weightSlider.SetValue(0.5f);
@@ -492,7 +509,7 @@ void TerrainWindow::Create(EditorComponent* _editor)
 			break;
 		case PRESET_ISLANDS:
 			terrain->weather.SetOceanEnabled(true);
-			seedSlider.SetValue(4691);
+			seedSlider.SetValue(8526);
 			bottomLevelSlider.SetValue(-79);
 			topLevelSlider.SetValue(520);
 			perlin->weightSlider.SetValue(0.5f);
@@ -510,7 +527,7 @@ void TerrainWindow::Create(EditorComponent* _editor)
 			break;
 		case PRESET_MOUNTAINS:
 			terrain->weather.SetOceanEnabled(false);
-			seedSlider.SetValue(8863);
+			seedSlider.SetValue(5213);
 			bottomLevelSlider.SetValue(0);
 			topLevelSlider.SetValue(2960);
 			perlin->weightSlider.SetValue(0.5f);
@@ -528,7 +545,7 @@ void TerrainWindow::Create(EditorComponent* _editor)
 			break;
 		case PRESET_ARCTIC:
 			terrain->weather.SetOceanEnabled(false);
-			seedSlider.SetValue(2124);
+			seedSlider.SetValue(11597);
 			bottomLevelSlider.SetValue(-50);
 			topLevelSlider.SetValue(40);
 			perlin->weightSlider.SetValue(1);
@@ -657,10 +674,16 @@ void TerrainWindow::Create(EditorComponent* _editor)
 	AddWidget(&topLevelSlider);
 
 	saveHeightmapButton.Create("Save Heightmap...");
-	saveHeightmapButton.SetTooltip("Save a heightmap texture from the currently generated terrain, where the red channel corresponds to terrain height and the resolution to dimensions.\nThe heightmap will be normalized into 8bit PNG format which can result in precision loss!");
+	saveHeightmapButton.SetTooltip("Save a heightmap texture from the currently generated terrain, where the red channel corresponds to terrain height and the resolution to dimensions.\nThe image will be saved as a single channel 16-bit PNG.");
 	saveHeightmapButton.SetSize(XMFLOAT2(wid, hei));
 	saveHeightmapButton.SetPos(XMFLOAT2(x, y += step));
 	AddWidget(&saveHeightmapButton);
+
+	saveRegionButton.Create("Save Blendmap...");
+	saveRegionButton.SetTooltip("Save a color texture from the currently generated terrain where RGBA channels indicate terrain property blend weights.\nNote that you can get a completely transparent image easily if the alpha channel weights are zero and you export to PNG.");
+	saveRegionButton.SetSize(XMFLOAT2(wid, hei));
+	saveRegionButton.SetPos(XMFLOAT2(x, y += step));
+	AddWidget(&saveRegionButton);
 
 	region1Slider.Create(0, 8, 1, 10000, "Slope Region: ");
 	region1Slider.SetTooltip("The region's falloff power");
@@ -704,15 +727,19 @@ void TerrainWindow::Create(EditorComponent* _editor)
 				wi::primitive::AABB aabb;
 				for (auto& chunk : terrain->chunks)
 				{
-					const wi::primitive::AABB& object_aabb = terrain->scene->aabb_objects[terrain->scene->objects.GetIndex(chunk.second.entity)];
+					const size_t index = terrain->scene->objects.GetIndex(chunk.second.entity);
+					if (index == ~0ull)
+						continue;
+					const wi::primitive::AABB& object_aabb = terrain->scene->aabb_objects[index];
 					aabb = wi::primitive::AABB::Merge(aabb, object_aabb);
 				}
 
 				wi::vector<uint8_t> data;
 				int width = int(aabb.getHalfWidth().x * 2 + 1);
 				int height = int(aabb.getHalfWidth().z * 2 + 1);
-				data.resize(width * height);
+				data.resize(width * height * sizeof(uint16_t));
 				std::fill(data.begin(), data.end(), 0u);
+				uint16_t* dest = (uint16_t*)data.data();
 
 				for (auto& chunk : terrain->chunks)
 				{
@@ -733,18 +760,107 @@ void TerrainWindow::Create(EditorComponent* _editor)
 								p.x -= aabb._min.x;
 								p.z -= aabb._min.z;
 								int coord = int(p.x) + int(p.z) * width;
-								data[coord] = uint8_t(wi::math::InverseLerp(aabb._min.y, aabb._max.y, p.y) * 255u);
+								dest[coord] = uint16_t(wi::math::InverseLerp(aabb._min.y, aabb._max.y, p.y) * 65535u);
 							}
 						}
 					}
 				}
 
+				std::string extension = wi::helper::GetExtensionFromFileName(fileName);
+				std::string filename_replaced = fileName;
+				if (extension != "PNG")
+				{
+					filename_replaced = wi::helper::ReplaceExtension(fileName, "PNG");
+				}
+
 				wi::graphics::TextureDesc desc;
 				desc.width = uint32_t(width);
 				desc.height = uint32_t(height);
-				desc.format = wi::graphics::Format::R8_UNORM;
-				bool success = wi::helper::saveTextureToFile(data, desc, wi::helper::ReplaceExtension(fileName, "PNG"));
+				desc.format = wi::graphics::Format::R16_UNORM;
+				bool success = wi::helper::saveTextureToFile(data, desc, filename_replaced);
 				assert(success);
+
+				if (success)
+				{
+					editor->PostSaveText("Exported terrain height map: ", filename_replaced);
+				}
+
+				});
+			});
+		});
+
+
+	saveRegionButton.OnClick([=](wi::gui::EventArgs args) {
+
+		wi::helper::FileDialogParams params;
+		params.type = wi::helper::FileDialogParams::SAVE;
+		params.description = "JPG, PNG";
+		params.extensions = { "JPG", "PNG" };
+		wi::helper::FileDialog(params, [=](std::string fileName) {
+			wi::eventhandler::Subscribe_Once(wi::eventhandler::EVENT_THREAD_SAFE_POINT, [=](uint64_t userdata) {
+
+				wi::primitive::AABB aabb;
+				for (auto& chunk : terrain->chunks)
+				{
+					const size_t index = terrain->scene->objects.GetIndex(chunk.second.entity);
+					if (index == ~0ull)
+						continue;
+					const wi::primitive::AABB& object_aabb = terrain->scene->aabb_objects[index];
+					aabb = wi::primitive::AABB::Merge(aabb, object_aabb);
+				}
+
+				wi::vector<uint8_t> data;
+				int width = int(aabb.getHalfWidth().x * 2 + 1);
+				int height = int(aabb.getHalfWidth().z * 2 + 1);
+				data.resize(width * height * sizeof(wi::Color));
+				std::fill(data.begin(), data.end(), 0u);
+				wi::Color* dest = (wi::Color*)data.data();
+
+				for (auto& chunk : terrain->chunks)
+				{
+					const wi::terrain::ChunkData& chunk_data = chunk.second;
+					const ObjectComponent* object = terrain->scene->objects.GetComponent(chunk.second.entity);
+					if (object != nullptr)
+					{
+						const MeshComponent* mesh = terrain->scene->meshes.GetComponent(object->meshID);
+						if (mesh != nullptr)
+						{
+							size_t objectIndex = terrain->scene->objects.GetIndex(chunk.second.entity);
+							const XMMATRIX W = XMLoadFloat4x4(&terrain->scene->matrix_objects[objectIndex]);
+							int i = 0;
+							for (auto& x : mesh->vertex_positions)
+							{
+								XMVECTOR P = XMLoadFloat3(&x);
+								P = XMVector3Transform(P, W);
+								XMFLOAT3 p;
+								XMStoreFloat3(&p, P);
+								p.x -= aabb._min.x;
+								p.z -= aabb._min.z;
+								int coord = int(p.x) + int(p.z) * width;
+								dest[coord] = chunk_data.region_weights[i++];
+							}
+						}
+					}
+				}
+
+				std::string extension = wi::helper::toUpper(wi::helper::GetExtensionFromFileName(fileName));
+				std::string filename_replaced = fileName;
+				if (extension != "JPG" && extension != "PNG")
+				{
+					filename_replaced = wi::helper::ReplaceExtension(fileName, "JPG");
+				}
+
+				wi::graphics::TextureDesc desc;
+				desc.width = uint32_t(width);
+				desc.height = uint32_t(height);
+				desc.format = wi::graphics::Format::R8G8B8A8_UNORM;
+				bool success = wi::helper::saveTextureToFile(data, desc, filename_replaced);
+				assert(success);
+
+				if (success)
+				{
+					editor->PostSaveText("Exported terrain blend map: ", filename_replaced);
+				}
 
 				});
 			});
@@ -777,6 +893,7 @@ void TerrainWindow::SetEntity(Entity entity)
 	removalCheckBox.SetCheck(terrain->IsRemovalEnabled());
 	grassCheckBox.SetCheck(terrain->IsGrassEnabled());
 	physicsCheckBox.SetCheck(terrain->IsPhysicsEnabled());
+	tessellationCheckBox.SetCheck(terrain->IsTessellationEnabled());
 	lodSlider.SetValue(terrain->lod_multiplier);
 	generationSlider.SetValue((float)terrain->generation);
 	propGenerationSlider.SetValue((float)terrain->prop_generation);
@@ -836,7 +953,7 @@ void TerrainWindow::AddModifier(ModifierWindow* modifier_window)
 		modifiers_to_remove.push_back(modifier_window);
 		});
 
-	editor->optionsWnd.themeCombo.SetSelected(editor->optionsWnd.themeCombo.GetSelected()); // theme refresh
+	editor->optionsWnd.generalWnd.themeCombo.SetSelected(editor->optionsWnd.generalWnd.themeCombo.GetSelected()); // theme refresh
 }
 void TerrainWindow::SetupAssets()
 {
@@ -849,12 +966,6 @@ void TerrainWindow::SetupAssets()
 	terrain_preset.material_Slope.SetRoughness(0.1f);
 	terrain_preset.material_LowAltitude.SetRoughness(1);
 	terrain_preset.material_HighAltitude.SetRoughness(1);
-#if 0
-	terrain_preset.material_Base.textures[MaterialComponent::BASECOLORMAP].name = wi::helper::GetCurrentPath() + "/terrain/tile.png";
-	terrain_preset.material_Slope.textures[MaterialComponent::BASECOLORMAP].name = wi::helper::GetCurrentPath() + "/terrain/tile.png";
-	terrain_preset.material_LowAltitude.textures[MaterialComponent::BASECOLORMAP].name = wi::helper::GetCurrentPath() + "/terrain/tile.png";
-	terrain_preset.material_HighAltitude.textures[MaterialComponent::BASECOLORMAP].name = wi::helper::GetCurrentPath() + "/terrain/tile.png";
-#else
 	terrain_preset.material_Base.textures[MaterialComponent::BASECOLORMAP].name = wi::helper::GetCurrentPath() + "/terrain/base.jpg";
 	terrain_preset.material_Base.textures[MaterialComponent::NORMALMAP].name = wi::helper::GetCurrentPath() + "/terrain/base_nor.jpg";
 	terrain_preset.material_Slope.textures[MaterialComponent::BASECOLORMAP].name = wi::helper::GetCurrentPath() + "/terrain/slope.jpg";
@@ -863,130 +974,148 @@ void TerrainWindow::SetupAssets()
 	terrain_preset.material_LowAltitude.textures[MaterialComponent::NORMALMAP].name = wi::helper::GetCurrentPath() + "/terrain/low_altitude_nor.jpg";
 	terrain_preset.material_HighAltitude.textures[MaterialComponent::BASECOLORMAP].name = wi::helper::GetCurrentPath() + "/terrain/high_altitude.jpg";
 	terrain_preset.material_HighAltitude.textures[MaterialComponent::NORMALMAP].name = wi::helper::GetCurrentPath() + "/terrain/high_altitude_nor.jpg";
-#endif
-	terrain_preset.material_GrassParticle.textures[MaterialComponent::BASECOLORMAP].name = wi::helper::GetCurrentPath() + "/terrain/grassparticle.png";
+	terrain_preset.material_Base.CreateRenderData();
+	terrain_preset.material_Slope.CreateRenderData();
+	terrain_preset.material_LowAltitude.CreateRenderData();
+	terrain_preset.material_HighAltitude.CreateRenderData();
+
+	std::string terrain_path = wi::helper::GetCurrentPath() + "/terrain/";
+	wi::config::File config;
+	config.Open(std::string(terrain_path + "props.ini").c_str());
+	std::unordered_map<std::string, Scene> prop_scenes;
+
+	for (const auto& it : config)
+	{
+		const std::string& section_name = it.first;
+		const wi::config::Section& section = it.second;
+		Entity entity = INVALID_ENTITY;
+		Scene* scene = &editor->GetCurrentScene();
+
+		if (section.Has("file"))
+		{
+			std::string text = section.GetText("file");
+			if (prop_scenes.count(text) == 0)
+			{
+				wi::scene::LoadModel(prop_scenes[text], terrain_path + text);
+			}
+			if (prop_scenes.count(text) != 0)
+			{
+				scene = &prop_scenes[text];
+			}
+		}
+		if (section.Has("entity"))
+		{
+			std::string text = section.GetText("entity");
+			entity = scene->Entity_FindByName(text);
+		}
+		if (entity == INVALID_ENTITY)
+		{
+			continue;
+		}
+
+		wi::terrain::Prop& prop = terrain_preset.props.emplace_back();
+
+		if (section.Has("min_count_per_chunk"))
+		{
+			prop.min_count_per_chunk = section.GetInt("min_count_per_chunk");
+		}
+		if (section.Has("max_count_per_chunk"))
+		{
+			prop.max_count_per_chunk = section.GetInt("max_count_per_chunk");
+		}
+		if (section.Has("region"))
+		{
+			prop.region = section.GetInt("region");
+		}
+		if (section.Has("region_power"))
+		{
+			prop.region_power = section.GetFloat("region_power");
+		}
+		if (section.Has("noise_frequency"))
+		{
+			prop.noise_frequency = section.GetFloat("noise_frequency");
+		}
+		if (section.Has("noise_power"))
+		{
+			prop.noise_power = section.GetFloat("noise_power");
+		}
+		if (section.Has("threshold"))
+		{
+			prop.threshold = section.GetFloat("threshold");
+		}
+		if (section.Has("min_size"))
+		{
+			prop.min_size = section.GetFloat("min_size");
+		}
+		if (section.Has("max_size"))
+		{
+			prop.max_size = section.GetFloat("max_size");
+		}
+		if (section.Has("min_y_offset"))
+		{
+			prop.min_y_offset = section.GetFloat("min_y_offset");
+		}
+		if (section.Has("max_y_offset"))
+		{
+			prop.max_y_offset = section.GetFloat("max_y_offset");
+		}
+
+		wi::Archive archive;
+		EntitySerializer seri;
+		scene->Entity_Serialize(
+			archive,
+			seri,
+			entity,
+			wi::scene::Scene::EntitySerializeFlags::RECURSIVE | wi::scene::Scene::EntitySerializeFlags::KEEP_INTERNAL_ENTITY_REFERENCES
+		);
+		archive.WriteData(prop.data);
+		scene->Entity_Remove(entity); // The entities will be placed by terrain generator, we don't need the default object that the scene has anymore
+	}
+
+	for (auto& it : prop_scenes)
+	{
+		editor->GetCurrentScene().Merge(it.second);
+	}
+
+	// Grass config:
 	terrain_preset.material_GrassParticle.alphaRef = 0.75f;
 	terrain_preset.grass_properties.length = 2;
 	terrain_preset.grass_properties.frameCount = 2;
 	terrain_preset.grass_properties.framesX = 1;
 	terrain_preset.grass_properties.framesY = 2;
 	terrain_preset.grass_properties.frameStart = 0;
-	terrain_preset.material_Base.CreateRenderData();
-	terrain_preset.material_Slope.CreateRenderData();
-	terrain_preset.material_LowAltitude.CreateRenderData();
-	terrain_preset.material_HighAltitude.CreateRenderData();
-	terrain_preset.material_GrassParticle.CreateRenderData();
 
-	Scene props_scene;
-	wi::scene::LoadModel(props_scene, wi::helper::GetCurrentPath() + "/terrain/props.wiscene");
-
-	// Tree prop:
-	if(props_scene.Entity_FindByName("tree_mesh") != INVALID_ENTITY)
+	wi::config::File grass_config;
+	grass_config.Open(std::string(terrain_path + "grass.ini").c_str());
+	if (grass_config.Has("texture"))
 	{
-		wi::terrain::Prop& prop = terrain_preset.props.emplace_back();
-		prop.min_count_per_chunk = 0;
-		prop.max_count_per_chunk = 20;
-		prop.region = 0;
-		prop.region_power = 2;
-		prop.noise_frequency = 0.1f;
-		prop.noise_power = 1;
-		prop.threshold = 0.4f;
-		prop.min_size = 1.0f;
-		prop.max_size = 4.0f;
-		prop.min_y_offset = -0.25f;
-		prop.max_y_offset = -0.25f;
-		Entity mesh_entity = props_scene.Entity_FindByName("tree_mesh");
-		props_scene.impostors.Create(mesh_entity).swapInDistance = 200;
-		Entity object_entity = props_scene.Entity_FindByName("tree_object");
-		ObjectComponent* object = props_scene.objects.GetComponent(object_entity);
-		if (object != nullptr)
-		{
-			object->lod_distance_multiplier = 0.05f;
-			//prop.object.cascadeMask = 1; // they won't be rendered into the largest shadow cascade
-		}
-		wi::Archive archive;
-		EntitySerializer seri;
-		props_scene.Entity_Serialize(
-			archive,
-			seri,
-			object_entity,
-			wi::scene::Scene::EntitySerializeFlags::RECURSIVE | wi::scene::Scene::EntitySerializeFlags::KEEP_INTERNAL_ENTITY_REFERENCES
-		);
-		archive.WriteData(prop.data);
-		props_scene.Entity_Remove(object_entity); // The objects will be placed by terrain generator, we don't need the default object that the scene has anymore
+		terrain_preset.material_GrassParticle.textures[MaterialComponent::BASECOLORMAP].name = terrain_path + grass_config.GetText("texture");
+		terrain_preset.material_GrassParticle.CreateRenderData();
 	}
-	// Rock prop:
-	if (props_scene.Entity_FindByName("rock_mesh") != INVALID_ENTITY)
+	if (grass_config.Has("alphaRef"))
 	{
-		wi::terrain::Prop& prop = terrain_preset.props.emplace_back();
-		prop.min_count_per_chunk = 0;
-		prop.max_count_per_chunk = 8;
-		prop.region = 0;
-		prop.region_power = 1;
-		prop.noise_frequency = 0.005f;
-		prop.noise_power = 2;
-		prop.threshold = 0.5f;
-		prop.min_size = 0.02f;
-		prop.max_size = 2.0f;
-		prop.min_y_offset = -1;
-		prop.max_y_offset = 0.25f;
-		Entity mesh_entity = props_scene.Entity_FindByName("rock_mesh");
-		Entity object_entity = props_scene.Entity_FindByName("rock_object");
-		ObjectComponent* object = props_scene.objects.GetComponent(object_entity);
-		if (object != nullptr)
-		{
-			object->lod_distance_multiplier = 0.02f;
-			object->cascadeMask = 1; // they won't be rendered into the largest shadow cascade
-			object->draw_distance = 400;
-		}
-		wi::Archive archive;
-		EntitySerializer seri;
-		props_scene.Entity_Serialize(
-			archive,
-			seri,
-			object_entity,
-			wi::scene::Scene::EntitySerializeFlags::RECURSIVE | wi::scene::Scene::EntitySerializeFlags::KEEP_INTERNAL_ENTITY_REFERENCES
-		);
-		archive.WriteData(prop.data);
-		props_scene.Entity_Remove(object_entity); // The objects will be placed by terrain generator, we don't need the default object that the scene has anymore
+		terrain_preset.material_GrassParticle.alphaRef = grass_config.GetFloat("alphaRef");
 	}
-	// Bush prop:
-	if (props_scene.Entity_FindByName("bush_mesh") != INVALID_ENTITY)
+	if (grass_config.Has("length"))
 	{
-		wi::terrain::Prop& prop = terrain_preset.props.emplace_back();
-		prop.min_count_per_chunk = 0;
-		prop.max_count_per_chunk = 10;
-		prop.region = 0;
-		prop.region_power = 4;
-		prop.noise_frequency = 0.01f;
-		prop.noise_power = 4;
-		prop.threshold = 0.1f;
-		prop.min_size = 0.05f;
-		prop.max_size = 0.5f;
-		prop.min_y_offset = -0.25;
-		prop.max_y_offset = 0;
-		Entity mesh_entity = props_scene.Entity_FindByName("bush_mesh");
-		Entity object_entity = props_scene.Entity_FindByName("bush_object");
-		ObjectComponent* object = props_scene.objects.GetComponent(object_entity);
-		if (object != nullptr)
-		{
-			object->lod_distance_multiplier = 0.05f;
-			object->cascadeMask = 1; // they won't be rendered into the largest shadow cascade
-			object->draw_distance = 200;
-		}
-		wi::Archive archive;
-		EntitySerializer seri;
-		props_scene.Entity_Serialize(
-			archive,
-			seri,
-			object_entity,
-			wi::scene::Scene::EntitySerializeFlags::RECURSIVE | wi::scene::Scene::EntitySerializeFlags::KEEP_INTERNAL_ENTITY_REFERENCES
-		);
-		archive.WriteData(prop.data);
-		props_scene.Entity_Remove(object_entity); // The objects will be placed by terrain generator, we don't need the default object that the scene has anymore
+		terrain_preset.grass_properties.length = grass_config.GetFloat("length");
 	}
-
-	editor->GetCurrentScene().Merge(props_scene);
+	if (grass_config.Has("frameCount"))
+	{
+		terrain_preset.grass_properties.frameCount = grass_config.GetInt("frameCount");
+	}
+	if (grass_config.Has("framesX"))
+	{
+		terrain_preset.grass_properties.framesX = grass_config.GetInt("framesX");
+	}
+	if (grass_config.Has("framesY"))
+	{
+		terrain_preset.grass_properties.framesY = grass_config.GetInt("framesY");
+	}
+	if (grass_config.Has("frameCount"))
+	{
+		terrain_preset.grass_properties.frameStart = grass_config.GetInt("frameStart");
+	}
 
 	terrain = &terrain_preset;
 	presetCombo.SetSelected(0);
@@ -1049,6 +1178,7 @@ void TerrainWindow::ResizeLayout()
 	centerToCamCheckBox.SetPos(XMFLOAT2(removalCheckBox.GetPos().x - 100, removalCheckBox.GetPos().y));
 	add_checkbox(grassCheckBox);
 	physicsCheckBox.SetPos(XMFLOAT2(grassCheckBox.GetPos().x - 100, grassCheckBox.GetPos().y));
+	add_checkbox(tessellationCheckBox);
 	add(lodSlider);
 	add(generationSlider);
 	add(propGenerationSlider);
@@ -1066,6 +1196,7 @@ void TerrainWindow::ResizeLayout()
 	add(region2Slider);
 	add(region3Slider);
 	add(saveHeightmapButton);
+	add(saveRegionButton);
 	add(addModifierCombo);
 
 	for (auto& modifier : modifiers)

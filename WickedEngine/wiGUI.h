@@ -8,6 +8,7 @@
 #include "wiScene.h"
 #include "wiSprite.h"
 #include "wiSpriteFont.h"
+#include "wiLocalization.h"
 
 #include <string>
 #include <functional>
@@ -17,16 +18,16 @@ namespace wi::gui
 
 	struct EventArgs
 	{
-		XMFLOAT2 clickPos = {};
-		XMFLOAT2 startPos = {};
-		XMFLOAT2 deltaPos = {};
-		XMFLOAT2 endPos = {};
-		float fValue = 0;
-		bool bValue = false;
-		int iValue = 0;
-		wi::Color color;
-		std::string sValue;
-		uint64_t userdata = 0;
+		XMFLOAT2 clickPos = {};	// mouse click coordinate
+		XMFLOAT2 startPos = {};	// mouse start position of operation (drag)
+		XMFLOAT2 deltaPos = {}; // mouse delta position of operation since last update (drag)
+		XMFLOAT2 endPos = {};	// mouse end position of operation (drag)
+		float fValue = 0;		// generic float value of operation
+		bool bValue = false;	// generic boolean value of operation
+		int iValue = 0;			// generic integer value of operation
+		wi::Color color;		// color value of color picker operation
+		std::string sValue;		// generic string value of operation
+		uint64_t userdata = 0;	// this will provide the userdata value that was set to a widget (or part of a widget)
 	};
 
 	enum WIDGETSTATE
@@ -91,18 +92,30 @@ namespace wi::gui
 		WIDGET_ID_USER,
 	};
 
+	enum class LocalizationEnabled
+	{
+		None = 0,
+		Text = 1 << 0,
+		Tooltip = 1 << 1,
+		Items = 1 << 2,		// ComboBox items
+		Children = 1 << 3,	// Window children
+
+		All = Text | Tooltip | Items | Children,
+	};
+
 	struct Theme
 	{
 		// Reduced version of wi::image::Params, excluding position, alignment, etc.
 		struct Image
 		{
-			XMFLOAT4 color = wi::image::Params().color;
-			wi::enums::BLENDMODE blendFlag = wi::image::Params().blendFlag;
-			wi::image::SAMPLEMODE sampleFlag = wi::image::Params().sampleFlag;
-			wi::image::QUALITY quality = wi::image::Params().quality;
-			bool background = wi::image::Params().isBackgroundEnabled();
-			bool corner_rounding = wi::image::Params().isCornerRoundingEnabled();
-			wi::image::Params::Rounding corners_rounding[arraysize(wi::image::Params().corners_rounding)];
+			inline static const wi::image::Params params; // prototype for default values
+			XMFLOAT4 color = params.color;
+			wi::enums::BLENDMODE blendFlag = params.blendFlag;
+			wi::image::SAMPLEMODE sampleFlag = params.sampleFlag;
+			wi::image::QUALITY quality = params.quality;
+			bool background = params.isBackgroundEnabled();
+			bool corner_rounding = params.isCornerRoundingEnabled();
+			wi::image::Params::Rounding corners_rounding[arraysize(params.corners_rounding)];
 
 			void Apply(wi::image::Params& params) const
 			{
@@ -157,15 +170,16 @@ namespace wi::gui
 		// Reduced version of wi::font::Params, excluding position, alignment, etc.
 		struct Font
 		{
-			wi::Color color = wi::font::Params().color;
-			wi::Color shadow_color = wi::font::Params().shadowColor;
-			int style = wi::font::Params().style;
-			float softness = wi::font::Params().softness;
-			float bolden = wi::font::Params().bolden;
-			float shadow_softness = wi::font::Params().shadow_softness;
-			float shadow_bolden = wi::font::Params().shadow_bolden;
-			float shadow_offset_x = wi::font::Params().shadow_offset_x;
-			float shadow_offset_y = wi::font::Params().shadow_offset_y;
+			inline static const wi::font::Params params; // prototype for default values
+			wi::Color color = params.color;
+			wi::Color shadow_color = params.shadowColor;
+			int style = params.style;
+			float softness = params.softness;
+			float bolden = params.bolden;
+			float shadow_softness = params.shadow_softness;
+			float shadow_bolden = params.shadow_bolden;
+			float shadow_offset_x = params.shadow_offset_x;
+			float shadow_offset_y = params.shadow_offset_y;
 
 			void Apply(wi::font::Params& params) const
 			{
@@ -218,14 +232,19 @@ namespace wi::gui
 		Widget* GetWidget(const std::string& name);
 
 		// returns true if any gui element has the focus
-		bool HasFocus();
+		bool HasFocus() const;
+		// returns true if text input is happening
+		bool IsTyping() const;
 
 		void SetVisible(bool value) { visible = value; }
-		bool IsVisible() { return visible; }
+		bool IsVisible() const { return visible; }
 
 		void SetColor(wi::Color color, int id = -1);
 		void SetShadowColor(wi::Color color);
 		void SetTheme(const Theme& theme, int id = -1);
+
+		void ExportLocalization(wi::Localization& localization) const;
+		void ImportLocalization(const wi::Localization& localization);
 	};
 
 	class Widget : public wi::scene::TransformComponent
@@ -236,6 +255,7 @@ namespace wi::gui
 		std::string name;
 		bool enabled = true;
 		bool visible = true;
+		LocalizationEnabled localization_enabled = LocalizationEnabled::All;
 		float shadow = 1; // shadow radius
 		wi::Color shadow_color = wi::Color::Shadow();
 		WIDGETSTATE state = IDLE;
@@ -251,7 +271,9 @@ namespace wi::gui
 
 		const std::string& GetName() const;
 		void SetName(const std::string& value);
-		const std::string GetText() const;
+		std::string GetText() const;
+		std::string GetTooltip() const;
+		void SetText(const char* value);
 		void SetText(const std::string& value);
 		void SetText(std::string&& value);
 		void SetTooltip(const std::string& value);
@@ -282,6 +304,7 @@ namespace wi::gui
 		virtual void SetShadowColor(wi::Color color);
 		virtual void SetImage(wi::Resource textureResource, int id = -1);
 		virtual void SetTheme(const Theme& theme, int id = -1);
+		virtual const char* GetWidgetTypeName() const { return "Widget"; }
 
 		wi::Sprite sprites[WIDGETSTATE_COUNT];
 		wi::SpriteFont font;
@@ -308,6 +331,13 @@ namespace wi::gui
 		bool priority_change = true;
 		uint32_t priority = 0;
 		bool force_disable = false;
+
+		bool IsLocalizationEnabled() const { return localization_enabled != LocalizationEnabled::None; }
+		LocalizationEnabled GetLocalizationEnabled() const { return localization_enabled; }
+		void SetLocalizationEnabled(LocalizationEnabled value) { localization_enabled = value; }
+		void SetLocalizationEnabled(bool value) { localization_enabled = value ? LocalizationEnabled::All : LocalizationEnabled::None; }
+		virtual void ExportLocalization(wi::Localization& localization) const;
+		virtual void ImportLocalization(const wi::Localization& localization);
 	};
 
 	// Clickable, draggable box
@@ -329,6 +359,7 @@ namespace wi::gui
 		void Update(const wi::Canvas& canvas, float dt) override;
 		void Render(const wi::Canvas& canvas, wi::graphics::CommandList cmd) const override;
 		void SetTheme(const Theme& theme, int id = -1) override;
+		const char* GetWidgetTypeName() const override { return "Button"; }
 
 		void OnClick(std::function<void(EventArgs args)> func);
 		void OnDragStart(std::function<void(EventArgs args)> func);
@@ -348,6 +379,7 @@ namespace wi::gui
 		float list_offset = 0;
 		float overscroll = 0;
 		bool vertical = true;
+		float safe_area = 0;
 		XMFLOAT2 grab_pos = {};
 		float grab_delta = 0;
 
@@ -365,6 +397,7 @@ namespace wi::gui
 		void SetOverScroll(float amount) { overscroll = amount; }
 		// Check whether the scrollbar is required (when the items don't fit and scrolling could be used)
 		bool IsScrollbarRequired() const { return scrollbar_granularity < 0.999f; }
+		void SetSafeArea(float value) { safe_area = value; }
 
 		enum SCROLLBAR_STATE
 		{
@@ -380,6 +413,7 @@ namespace wi::gui
 		void Render(const wi::Canvas& canvas, wi::graphics::CommandList cmd) const override;
 		void SetColor(wi::Color color, int id = -1) override;
 		void SetTheme(const Theme& theme, int id = -1) override;
+		const char* GetWidgetTypeName() const override { return "ScrollBar"; }
 
 		void SetVertical(bool value) { vertical = value; }
 		bool IsVertical() const { return vertical; }
@@ -396,6 +430,7 @@ namespace wi::gui
 		void Render(const wi::Canvas& canvas, wi::graphics::CommandList cmd) const override;
 		void SetColor(wi::Color color, int id = -1) override;
 		void SetTheme(const Theme& theme, int id = -1) override;
+		const char* GetWidgetTypeName() const override { return "Label"; }
 
 		float scrollbar_width = 18;
 		ScrollBar scrollbar;
@@ -406,7 +441,9 @@ namespace wi::gui
 	{
 	protected:
 		std::function<void(EventArgs args)> onInputAccepted;
+		std::function<void(EventArgs args)> onInput;
 		static wi::SpriteFont font_input;
+		bool cancel_input_enabled = true;
 
 	public:
 		void Create(const std::string& name);
@@ -417,8 +454,13 @@ namespace wi::gui
 		void SetValue(int newValue);
 		void SetValue(float newValue);
 		const std::string GetValue();
+		const std::string GetCurrentInputValue();
 		void SetDescription(const std::string& desc) { font_description.SetText(desc); }
 		const std::string GetDescription() const { return font_description.GetTextA(); }
+
+		// Set whether incomplete input will be removed on lost activation state (default: true)
+		void SetCancelInputEnabled(bool value) { cancel_input_enabled = value; }
+		bool IsCancelInputEnabled() const { return cancel_input_enabled; }
 
 		// There can only be ONE active text input field, so these methods modify the active one
 		static void AddInput(const wchar_t inputChar);
@@ -430,8 +472,12 @@ namespace wi::gui
 		void Render(const wi::Canvas& canvas, wi::graphics::CommandList cmd) const override;
 		void SetColor(wi::Color color, int id = -1) override;
 		void SetTheme(const Theme& theme, int id = -1) override;
+		const char* GetWidgetTypeName() const override { return "TextInputField"; }
 
+		// Called when input was accepted with ENTER key:
 		void OnInputAccepted(std::function<void(EventArgs args)> func);
+		// Called when input was updated with new character:
+		void OnInput(std::function<void(EventArgs args)> func);
 	};
 
 	// Define an interval and slide the control along it
@@ -461,6 +507,7 @@ namespace wi::gui
 		void RenderTooltip(const wi::Canvas& canvas, wi::graphics::CommandList cmd) const override;
 		void SetColor(wi::Color color, int id = -1) override;
 		void SetTheme(const Theme& theme, int id = -1) override;
+		const char* GetWidgetTypeName() const override { return "Slider"; }
 
 		void OnSlide(std::function<void(EventArgs args)> func);
 
@@ -474,6 +521,7 @@ namespace wi::gui
 		std::function<void(EventArgs args)> onClick;
 		bool checked = false;
 		std::wstring check_text;
+		std::wstring uncheck_text;
 	public:
 		void Create(const std::string& name);
 
@@ -482,11 +530,13 @@ namespace wi::gui
 
 		void Update(const wi::Canvas& canvas, float dt) override;
 		void Render(const wi::Canvas& canvas, wi::graphics::CommandList cmd) const override;
+		const char* GetWidgetTypeName() const override { return "CheckBox"; }
 
 		void OnClick(std::function<void(EventArgs args)> func);
 
 		static void SetCheckTextGlobal(const std::string& text);
 		void SetCheckText(const std::string& text);
+		void SetUnCheckText(const std::string& text);
 	};
 
 	// Drop-down list
@@ -549,10 +599,14 @@ namespace wi::gui
 		void Render(const wi::Canvas& canvas, wi::graphics::CommandList cmd) const override;
 		void SetColor(wi::Color color, int id = -1) override;
 		void SetTheme(const Theme& theme, int id = -1) override;
+		const char* GetWidgetTypeName() const override { return "ComboBox"; }
 
 		void OnSelect(std::function<void(EventArgs args)> func);
 
 		wi::SpriteFont selected_font;
+
+		void ExportLocalization(wi::Localization& localization) const override;
+		void ImportLocalization(const wi::Localization& localization) override;
 	};
 
 	// Widget container
@@ -565,6 +619,7 @@ namespace wi::gui
 		float control_size = 20;
 		std::function<void(EventArgs args)> onClose;
 		std::function<void(EventArgs args)> onCollapse;
+		std::function<void()> onResize;
 
 	public:
 		enum class WindowControls
@@ -600,6 +655,7 @@ namespace wi::gui
 		void SetColor(wi::Color color, int id = -1) override;
 		void SetShadowColor(wi::Color color) override;
 		void SetTheme(const Theme& theme, int id = -1) override;
+		const char* GetWidgetTypeName() const override { return "Window"; }
 
 		void SetVisible(bool value) override;
 		void SetEnabled(bool value) override;
@@ -614,6 +670,7 @@ namespace wi::gui
 
 		void OnClose(std::function<void(EventArgs args)> func);
 		void OnCollapse(std::function<void(EventArgs args)> func);
+		void OnResize(std::function<void()> func);
 
 		Button closeButton;
 		Button collapseButton;
@@ -625,6 +682,9 @@ namespace wi::gui
 		Label label;
 		ScrollBar scrollbar_vertical;
 		ScrollBar scrollbar_horizontal;
+
+		void ExportLocalization(wi::Localization& localization) const override;
+		void ImportLocalization(const wi::Localization& localization) override;
 	};
 
 	// HSV-Color Picker
@@ -649,6 +709,7 @@ namespace wi::gui
 		void Update(const wi::Canvas& canvas, float dt) override;
 		void Render(const wi::Canvas& canvas, wi::graphics::CommandList cmd) const override;
 		void ResizeLayout() override;
+		const char* GetWidgetTypeName() const override { return "ColorPicker"; }
 
 		wi::Color GetPickColor() const;
 		void SetPickColor(wi::Color value);
@@ -661,6 +722,7 @@ namespace wi::gui
 		TextInputField text_H;
 		TextInputField text_S;
 		TextInputField text_V;
+		TextInputField text_hex;
 		Slider alphaSlider;
 	};
 
@@ -689,6 +751,7 @@ namespace wi::gui
 		wi::vector<Item> items;
 
 		float GetItemOffset(int index) const;
+		bool DoesItemHaveChildren(int index) const;
 	public:
 		void Create(const std::string& name);
 
@@ -707,6 +770,7 @@ namespace wi::gui
 		void Render(const wi::Canvas& canvas, wi::graphics::CommandList cmd) const override;
 		void SetColor(wi::Color color, int id = -1) override;
 		void SetTheme(const Theme& theme, int id = -1) override;
+		const char* GetWidgetTypeName() const override { return "TreeList"; }
 
 		void OnSelect(std::function<void(EventArgs args)> func);
 		void OnDelete(std::function<void(EventArgs args)> func);
@@ -723,5 +787,10 @@ struct enable_bitmask_operators<wi::gui::Window::WindowControls> {
 
 template<>
 struct enable_bitmask_operators<wi::gui::Window::AttachmentOptions> {
+	static const bool enable = true;
+};
+
+template<>
+struct enable_bitmask_operators<wi::gui::LocalizationEnabled> {
 	static const bool enable = true;
 };

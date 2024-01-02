@@ -37,9 +37,7 @@ float4 main(Input input) : SV_TARGET
 	for (uint bounce = 0; bounce < bounces; ++bounce)
 	{
 #ifdef RTAPI
-		RayQuery<
-			RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES
-		> q;
+		wiRayQuery q;
 #endif // RTAPI
 
 		surface.P = ray.Origin;
@@ -66,6 +64,7 @@ float4 main(Input input) : SV_TARGET
 					dist = FLT_MAX;
 
 					L = light.GetDirection().xyz;
+					L += sample_hemisphere_cos(L, rng) * light.GetRadius();
 					NdotL = saturate(dot(L, surface.N));
 
 					[branch]
@@ -85,6 +84,8 @@ float4 main(Input input) : SV_TARGET
 				break;
 				case ENTITY_TYPE_POINTLIGHT:
 				{
+					light.position += light.GetDirection() * (rng.next_float() - 0.5) * light.GetLength();
+					light.position += sample_hemisphere_cos(normalize(light.position - surface.P), rng) * light.GetRadius();
 					L = light.position - surface.P;
 					const float dist2 = dot(L, L);
 					const float range = light.GetRange();
@@ -110,6 +111,8 @@ float4 main(Input input) : SV_TARGET
 				break;
 				case ENTITY_TYPE_SPOTLIGHT:
 				{
+					float3 Loriginal = normalize(light.position - surface.P);
+					light.position += sample_hemisphere_cos(normalize(light.position - surface.P), rng) * light.GetRadius();
 					L = light.position - surface.P;
 					const float dist2 = dot(L, L);
 					const float range = light.GetRange();
@@ -125,7 +128,7 @@ float4 main(Input input) : SV_TARGET
 						[branch]
 						if (NdotL > 0)
 						{
-							const float spot_factor = dot(L, light.GetDirection());
+							const float spot_factor = dot(Loriginal, light.GetDirection());
 							const float spot_cutoff = light.GetConeAngleCos();
 
 							[branch]
@@ -148,12 +151,12 @@ float4 main(Input input) : SV_TARGET
 
 					RayDesc newRay;
 					newRay.Origin = surface.P;
-					newRay.Direction = normalize(lerp(L, sample_hemisphere_cos(L, rng), 0.025f));
 					newRay.TMin = 0.001;
 					newRay.TMax = dist;
+					newRay.Direction = L + max3(surface.sss);
 
 #ifdef RTAPI
-					uint flags = RAY_FLAG_CULL_FRONT_FACING_TRIANGLES;
+					uint flags = RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES | RAY_FLAG_CULL_FRONT_FACING_TRIANGLES;
 					if (bounce > ANYTHIT_CUTOFF_AFTER_BOUNCE_COUNT)
 					{
 						flags |= RAY_FLAG_FORCE_OPAQUE;
@@ -218,7 +221,7 @@ float4 main(Input input) : SV_TARGET
 			xTraceUserData.y,				// uint InstanceInclusionMask
 			ray								// RayDesc Ray
 		);
-		q.Proceed();
+		while (q.Proceed());
 		if (q.CommittedStatus() != COMMITTED_TRIANGLE_HIT)
 #else
 		RayHit hit = TraceRay_Closest(ray, xTraceUserData.y, rng);
@@ -232,11 +235,11 @@ float4 main(Input input) : SV_TARGET
 			if (IsStaticSky())
 			{
 				// We have envmap information in a texture:
-				envColor = DEGAMMA_SKY(texture_globalenvmap.SampleLevel(sampler_linear_clamp, ray.Direction, 0).rgb);
+				envColor = GetStaticSkyColor(ray.Direction);
 			}
 			else
 			{
-				envColor = GetDynamicSkyColor(ray.Direction, true, true, false, true);
+				envColor = GetDynamicSkyColor(ray.Direction, true, false, true);
 			}
 			result += max(0, energy * envColor);
 			break;
@@ -271,7 +274,8 @@ float4 main(Input input) : SV_TARGET
 		{
 			// Refraction
 			const float3 R = refract(ray.Direction, surface.N, 1 - surface.material.refraction);
-			ray.Direction = lerp(R, sample_hemisphere_cos(R, rng), surface.roughnessBRDF);
+			float roughnessBRDF = sqr(clamp(surface.roughness, 0.045, 1));
+			ray.Direction = lerp(R, sample_hemisphere_cos(R, rng), roughnessBRDF);
 			energy *= surface.albedo / max(0.001, surface.transmission);
 
 			// Add a new bounce iteration, otherwise the transparent effect can disappear:

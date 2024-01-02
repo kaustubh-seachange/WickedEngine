@@ -1,9 +1,9 @@
 #pragma once
-#include "WickedEngine.h"
 #include "GraphicsWindow.h"
 #include "CameraWindow.h"
 #include "MaterialPickerWindow.h"
 #include "PaintToolWindow.h"
+#include "GeneralWindow.h"
 
 class EditorComponent;
 
@@ -16,18 +16,7 @@ public:
 	void ResizeLayout() override;
 
 	EditorComponent* editor = nullptr;
-	wi::gui::CheckBox isScalatorCheckBox;
-	wi::gui::CheckBox isRotatorCheckBox;
-	wi::gui::CheckBox isTranslatorCheckBox;
-	wi::gui::CheckBox profilerEnabledCheckBox;
-	wi::gui::CheckBox physicsEnabledCheckBox;
-	wi::gui::CheckBox cinemaModeCheckBox;
-	wi::gui::CheckBox versionCheckBox;
-	wi::gui::CheckBox fpsCheckBox;
-	wi::gui::CheckBox otherinfoCheckBox;
-	wi::gui::ComboBox themeCombo;
-	wi::gui::ComboBox saveModeComboBox;
-	wi::gui::ComboBox sceneComboBox;
+	GeneralWindow generalWnd;
 	GraphicsWindow graphicsWnd;
 	CameraWindow cameraWnd;
 	MaterialPickerWindow materialPickerWnd;
@@ -57,16 +46,24 @@ public:
 		Terrain = 1 << 19,
 		Spring = 1 << 20,
 		Humanoid = 1 << 21,
+		Video = 1 << 22,
+		Sprite = 1 << 23,
+		Font = 1 << 24,
 
 		All = ~0ull,
 	} filter = Filter::All;
 	wi::gui::ComboBox newCombo;
 	wi::gui::ComboBox filterCombo;
+	wi::gui::TextInputField filterInput;
+	wi::gui::CheckBox filterCaseCheckBox;
 	wi::gui::TreeList entityTree;
+	wi::unordered_set<wi::ecs::Entity> entitytree_temp_items;
 	wi::unordered_set<wi::ecs::Entity> entitytree_added_items;
 	wi::unordered_set<wi::ecs::Entity> entitytree_opened_items;
 	void PushToEntityTree(wi::ecs::Entity entity, int level);
 	void RefreshEntityTree();
+
+	bool CheckEntityFilter(wi::ecs::Entity entity);
 };
 
 template<>

@@ -1,6 +1,5 @@
 #include "stdafx.h"
 #include "ExpressionWindow.h"
-#include "Editor.h"
 
 using namespace wi::ecs;
 using namespace wi::scene;
@@ -10,7 +9,7 @@ void ExpressionWindow::Create(EditorComponent* _editor)
 	editor = _editor;
 
 	wi::gui::Window::Create(ICON_EXPRESSION " Expression", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE);
-	SetSize(XMFLOAT2(670, 500));
+	SetSize(XMFLOAT2(670, 580));
 
 	closeButton.SetTooltip("Delete ExpressionComponent");
 	OnClose([=](wi::gui::EventArgs args) {
@@ -31,6 +30,24 @@ void ExpressionWindow::Create(EditorComponent* _editor)
 	float hei = 20;
 	float step = hei + 2;
 	float wid = 220;
+
+	infoLabel.Create("");
+	infoLabel.SetSize(XMFLOAT2(100, 60));
+	infoLabel.SetText("Tip: If you also attach a Sound component to this entity, the mouth expression (if available) will be animated based on the sound playing.");
+	AddWidget(&infoLabel);
+
+	talkCheckBox.Create("Force Talking: ");
+	talkCheckBox.SetTooltip("Force continuous talking animation, even if no voice is playing");
+	talkCheckBox.SetSize(XMFLOAT2(hei, hei));
+	talkCheckBox.OnClick([=](wi::gui::EventArgs args) {
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		ExpressionComponent* expression_mastering = scene.expressions.GetComponent(entity);
+		if (expression_mastering == nullptr)
+			return;
+
+		expression_mastering->SetForceTalkingEnabled(args.bValue);
+	});
+	AddWidget(&talkCheckBox);
 
 	blinkFrequencySlider.Create(0, 1, 0, 1000, "Blinks: ");
 	blinkFrequencySlider.SetTooltip("Specifies the number of blinks per second.");
@@ -270,6 +287,7 @@ void ExpressionWindow::SetEntity(Entity entity)
 		blinkCountSlider.SetValue(expression_mastering->blink_count);
 		lookFrequencySlider.SetValue(expression_mastering->look_frequency);
 		lookLengthSlider.SetValue(expression_mastering->look_length);
+		talkCheckBox.SetCheck(expression_mastering->IsForceTalkingEnabled());
 
 		expressionList.ClearItems();
 		for (const ExpressionComponent::Expression& expression : expression_mastering->expressions)
@@ -316,6 +334,8 @@ void ExpressionWindow::ResizeLayout()
 		y += padding;
 	};
 
+	add_fullwidth(infoLabel);
+	add_right(talkCheckBox);
 	add(blinkFrequencySlider);
 	add(blinkLengthSlider);
 	add(blinkCountSlider);

@@ -6,6 +6,7 @@
 #include <cassert>
 #include <cstring>
 #include <algorithm>
+#include <functional>
 
 namespace wi::graphics
 {
@@ -42,6 +43,7 @@ namespace wi::graphics
 		QUEUE_GRAPHICS,
 		QUEUE_COMPUTE,
 		QUEUE_COPY,
+		QUEUE_VIDEO_DECODE,
 
 		QUEUE_COUNT,
 	};
@@ -49,7 +51,7 @@ namespace wi::graphics
 	class GraphicsDevice
 	{
 	protected:
-		static const uint32_t BUFFERCOUNT = 2;
+		static constexpr uint32_t BUFFERCOUNT = 2;
 		uint64_t FRAMECOUNT = 0;
 		ValidationMode validationMode = ValidationMode::Disabled;
 		GraphicsDeviceCapability capabilities = GraphicsDeviceCapability::NONE;
@@ -57,8 +59,9 @@ namespace wi::graphics
 		size_t TOPLEVEL_ACCELERATION_STRUCTURE_INSTANCE_SIZE = 0;
 		uint32_t VARIABLE_RATE_SHADING_TILE_SIZE = 0;
 		uint64_t TIMESTAMP_FREQUENCY = 0;
-		uint32_t vendorId;
-		uint32_t deviceId;
+		uint64_t VIDEO_DECODE_BITSTREAM_ALIGNMENT = 1u;
+		uint32_t vendorId = 0;
+		uint32_t deviceId = 0;
 		std::string adapterName;
 		std::string driverDescription;
 		AdapterType adapterType = AdapterType::Other;
@@ -68,18 +71,20 @@ namespace wi::graphics
 
 		// Create a SwapChain. If the SwapChain is to be recreated, the window handle can be nullptr.
 		virtual bool CreateSwapChain(const SwapChainDesc* desc, wi::platform::window_type window, SwapChain* swapchain) const = 0;
-		virtual bool CreateBuffer(const GPUBufferDesc* desc, const void* initial_data, GPUBuffer* buffer) const = 0;
+		// Create a buffer with a callback to initialize its data. Note: don't read from callback's dest pointer, reads will be very slow! Use memcpy to write to it to make sure only writes happen!
+		virtual bool CreateBuffer2(const GPUBufferDesc* desc, const std::function<void(void* dest)>& init_callback, GPUBuffer* buffer) const = 0;
 		virtual bool CreateTexture(const TextureDesc* desc, const SubresourceData* initial_data, Texture* texture) const = 0;
 		virtual bool CreateShader(ShaderStage stage, const void* shadercode, size_t shadercode_size, Shader* shader) const = 0;
 		virtual bool CreateSampler(const SamplerDesc* desc, Sampler* sampler) const = 0;
 		virtual bool CreateQueryHeap(const GPUQueryHeapDesc* desc, GPUQueryHeap* queryheap) const = 0;
-		virtual bool CreatePipelineState(const PipelineStateDesc* desc, PipelineState* pso) const = 0;
-		virtual bool CreateRenderPass(const RenderPassDesc* desc, RenderPass* renderpass) const = 0;
+		// Creates a graphics pipeline state. If renderpass_info is specified, then it will be only compatible with that renderpass info, but it will be created immediately (it can also take longer to be created)
+		virtual bool CreatePipelineState(const PipelineStateDesc* desc, PipelineState* pso, const RenderPassInfo* renderpass_info = nullptr) const = 0;
 		virtual bool CreateRaytracingAccelerationStructure(const RaytracingAccelerationStructureDesc* desc, RaytracingAccelerationStructure* bvh) const { return false; }
 		virtual bool CreateRaytracingPipelineState(const RaytracingPipelineStateDesc* desc, RaytracingPipelineState* rtpso) const { return false; }
-		
-		virtual int CreateSubresource(Texture* texture, SubresourceType type, uint32_t firstSlice, uint32_t sliceCount, uint32_t firstMip, uint32_t mipCount, const Format* format_change = nullptr) const = 0;
-		virtual int CreateSubresource(GPUBuffer* buffer, SubresourceType type, uint64_t offset, uint64_t size = ~0, const Format* format_change = nullptr) const = 0;
+		virtual bool CreateVideoDecoder(const VideoDesc* desc, VideoDecoder* video_decoder) const { return false; };
+
+		virtual int CreateSubresource(Texture* texture, SubresourceType type, uint32_t firstSlice, uint32_t sliceCount, uint32_t firstMip, uint32_t mipCount, const Format* format_change = nullptr, const ImageAspect* aspect = nullptr, const Swizzle* swizzle = nullptr) const = 0;
+		virtual int CreateSubresource(GPUBuffer* buffer, SubresourceType type, uint64_t offset, uint64_t size = ~0, const Format* format_change = nullptr, const uint32_t* structuredbuffer_stride_change = nullptr) const = 0;
 
 		virtual int GetDescriptorIndex(const GPUResource* resource, SubresourceType type, int subresource = -1) const = 0;
 		virtual int GetDescriptorIndex(const Sampler* sampler) const = 0;
@@ -88,8 +93,9 @@ namespace wi::graphics
 		virtual void WriteTopLevelAccelerationStructureInstance(const RaytracingAccelerationStructureDesc::TopLevel::Instance* instance, void* dest) const {}
 		virtual void WriteShaderIdentifier(const RaytracingPipelineState* rtpso, uint32_t group_index, void* dest) const {}
 
-		// Set a debug name for the GPUResource, which will be visible in graphics debuggers
-		virtual void SetName(GPUResource* pResource, const char* name) = 0;
+		// Set a debug name which will be visible in graphics debuggers
+		virtual void SetName(GPUResource* pResource, const char* name) const {}
+		virtual void SetName(Shader* shader, const char* name) const {}
 
 		// Begin a new command list for GPU command recording.
 		//	This will be valid until SubmitCommandLists() is called.
@@ -118,7 +124,7 @@ namespace wi::graphics
 		// Returns the buffer count, which is the array size of buffered resources used by both the CPU and GPU
 		static constexpr uint32_t GetBufferCount() { return BUFFERCOUNT; }
 		// Returns the current buffer index, which is in range [0, GetBufferCount() - 1]
-		constexpr uint32_t GetBufferIndex() const { return GetFrameCount() % BUFFERCOUNT; }
+		constexpr uint32_t GetBufferIndex() const { return GetFrameCount() % GetBufferCount(); }
 
 		// Returns whether the graphics debug layer is enabled. It can be enabled when creating the device.
 		constexpr bool IsDebugDevice() const { return validationMode != ValidationMode::Disabled; }
@@ -127,6 +133,7 @@ namespace wi::graphics
 		constexpr size_t GetTopLevelAccelerationStructureInstanceSize() const { return TOPLEVEL_ACCELERATION_STRUCTURE_INSTANCE_SIZE; }
 		constexpr uint32_t GetVariableRateShadingTileSize() const { return VARIABLE_RATE_SHADING_TILE_SIZE; }
 		constexpr uint64_t GetTimestampFrequency() const { return TIMESTAMP_FREQUENCY; }
+		constexpr uint64_t GetVideoDecodeBitstreamAlignment() const { return VIDEO_DECODE_BITSTREAM_ALIGNMENT; }
 
 		constexpr uint32_t GetVendorId() const { return vendorId; }
 		constexpr uint32_t GetDeviceId() const { return deviceId; }
@@ -171,7 +178,7 @@ namespace wi::graphics
 
 		virtual void WaitCommandList(CommandList cmd, CommandList wait_for) = 0;
 		virtual void RenderPassBegin(const SwapChain* swapchain, CommandList cmd) = 0;
-		virtual void RenderPassBegin(const RenderPass* renderpass, CommandList cmd) = 0;
+		virtual void RenderPassBegin(const RenderPassImage* images, uint32_t image_count, CommandList cmd, RenderPassFlags flags = RenderPassFlags::NONE) = 0;
 		virtual void RenderPassEnd(CommandList cmd) = 0;
 		virtual void BindScissorRects(uint32_t numRects, const Rect* rects, CommandList cmd) = 0;
 		virtual void BindViewports(uint32_t NumViewports, const Viewport* pViewports, CommandList cmd) = 0;
@@ -201,8 +208,10 @@ namespace wi::graphics
 		virtual void DispatchIndirect(const GPUBuffer* args, uint64_t args_offset, CommandList cmd) = 0;
 		virtual void DispatchMesh(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ, CommandList cmd) {}
 		virtual void DispatchMeshIndirect(const GPUBuffer* args, uint64_t args_offset, CommandList cmd) {}
+		virtual void DispatchMeshIndirectCount(const GPUBuffer* args, uint64_t args_offset, const GPUBuffer* count, uint64_t count_offset, uint32_t max_count, CommandList cmd) {}
 		virtual void CopyResource(const GPUResource* pDst, const GPUResource* pSrc, CommandList cmd) = 0;
 		virtual void CopyBuffer(const GPUBuffer* pDst, uint64_t dst_offset, const GPUBuffer* pSrc, uint64_t src_offset, uint64_t size, CommandList cmd) = 0;
+		virtual void CopyTexture(const Texture* dst, uint32_t dstX, uint32_t dstY, uint32_t dstZ, uint32_t dstMip, uint32_t dstSlice, const Texture* src, uint32_t srcMip, uint32_t srcSlice, CommandList cmd, const Box* srcbox = nullptr, ImageAspect dst_aspect = ImageAspect::COLOR, ImageAspect src_aspect = ImageAspect::COLOR) = 0;
 		virtual void QueryBegin(const GPUQueryHeap *heap, uint32_t index, CommandList cmd) = 0;
 		virtual void QueryEnd(const GPUQueryHeap *heap, uint32_t index, CommandList cmd) = 0;
 		virtual void QueryResolve(const GPUQueryHeap* heap, uint32_t index, uint32_t count, const GPUBuffer* dest, uint64_t dest_offset, CommandList cmd) = 0;
@@ -215,13 +224,29 @@ namespace wi::graphics
 		virtual void PredicationBegin(const GPUBuffer* buffer, uint64_t offset, PredicationOp op, CommandList cmd) {}
 		virtual void PredicationEnd(CommandList cmd) {}
 		virtual void ClearUAV(const GPUResource* resource, uint32_t value, CommandList cmd) = 0;
+		virtual void VideoDecode(const VideoDecoder* video_decoder, const VideoDecodeOperation* op, CommandList cmd) {}
 
 		virtual void EventBegin(const char* name, CommandList cmd) = 0;
 		virtual void EventEnd(CommandList cmd) = 0;
 		virtual void SetMarker(const char* name, CommandList cmd) = 0;
 
+		virtual RenderPassInfo GetRenderPassInfo(CommandList cmd) = 0;
 
 		// Some useful helpers:
+
+		bool CreateBuffer(const GPUBufferDesc* desc, const void* initial_data, GPUBuffer* buffer) const
+		{
+			if (initial_data == nullptr)
+			{
+				return CreateBuffer2(desc, nullptr, buffer);
+			}
+			return CreateBuffer2(desc, [&](void* dest) { std::memcpy(dest, initial_data, desc->size); }, buffer);
+		}
+
+		void Barrier(const GPUBarrier& barrier, CommandList cmd)
+		{
+			Barrier(&barrier, 1, cmd);
+		}
 
 		struct GPULinearAllocator
 		{
@@ -303,6 +328,29 @@ namespace wi::graphics
 			GPUAllocation allocation = AllocateGPU(sizeof(T), cmd);
 			std::memcpy(allocation.data, &data, sizeof(T));
 			BindConstantBuffer(&allocation.buffer, slot, cmd, allocation.offset);
+		}
+
+		// Deprecated, kept for back-compat:
+		bool CreateRenderPass(const RenderPassDesc* desc, RenderPass* renderpass) const
+		{
+			renderpass->valid = true;
+			renderpass->desc = *desc;
+			return true;
+		}
+		// Deprecated, kept for back-compat:
+		void RenderPassBegin(const RenderPass* renderpass, CommandList cmd)
+		{
+			RenderPassFlags flags = {};
+			if (has_flag(renderpass->desc.flags, RenderPassDesc::Flags::ALLOW_UAV_WRITES))
+			{
+				flags |= RenderPassFlags::ALLOW_UAV_WRITES;
+			}
+			RenderPassImage rp[32] = {};
+			for (size_t i = 0; i < renderpass->desc.attachments.size(); ++i)
+			{
+				rp[i] = renderpass->desc.attachments[i];
+			}
+			RenderPassBegin(rp, (uint32_t)renderpass->desc.attachments.size(), cmd, flags);
 		}
 	};
 

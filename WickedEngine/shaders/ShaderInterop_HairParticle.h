@@ -2,22 +2,22 @@
 #define WI_SHADERINTEROP_HAIRPARTICLE_H
 
 #include "ShaderInterop.h"
+#include "ShaderInterop_Renderer.h"
 
-#define THREADCOUNT_SIMULATEHAIR 256
+#define THREADCOUNT_SIMULATEHAIR 64
 
 struct PatchSimulationData
 {
 	float3 position;
 	uint tangent_random;
-	float3 normal; // need high precision for the simulation!
+	uint3 normal_velocity; // packed fp16
 	uint binormal_length;
-	float3 velocity;
-	uint padding;
 };
 
 CBUFFER(HairParticleCB, CBSLOT_OTHER_HAIRPARTICLE)
 {
-	float4x4 xHairWorld;
+	ShaderTransform xHairTransform;
+	ShaderTransform xHairBaseMeshUnormRemap;
 
 	uint xHairRegenerate;
 	float xLength;
@@ -31,8 +31,8 @@ CBUFFER(HairParticleCB, CBSLOT_OTHER_HAIRPARTICLE)
 
 	float xHairViewDistance;
 	uint xHairBaseMeshIndexCount;
-	uint xHairBaseMeshVertexPositionStride;
-	uint xHairNumDispatchGroups;
+	uint xHairInstanceIndex;
+	uint padding0_xHair;
 
 	uint2 xHairFramesXY;
 	uint xHairFrameCount;
@@ -41,11 +41,6 @@ CBUFFER(HairParticleCB, CBSLOT_OTHER_HAIRPARTICLE)
 	float2 xHairTexMul;
 	float xHairAspect;
 	uint xHairLayerMask;
-
-	uint xHairInstanceIndex;
-	uint padding0;
-	uint padding1;
-	uint padding2;
 };
 
 #endif // WI_SHADERINTEROP_HAIRPARTICLE_H

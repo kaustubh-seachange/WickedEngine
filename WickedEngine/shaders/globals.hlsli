@@ -2,6 +2,7 @@
 #define WI_SHADER_GLOBALS_HF
 #include "ColorSpaceUtility.hlsli"
 #include "PixelPacking_R11G11B10.hlsli"
+#include "PixelPacking_RGBE.hlsli"
 #include "ShaderInterop.h"
 
 // The root signature will affect shader compilation for DX12.
@@ -13,8 +14,9 @@
 	"RootConstants(num32BitConstants=12, b999), " \
 	"CBV(b0), " \
 	"CBV(b1), " \
+	"CBV(b2), " \
 	"DescriptorTable( " \
-		"CBV(b2, numDescriptors = 12, flags = DATA_STATIC_WHILE_SET_AT_EXECUTE)," \
+		"CBV(b3, numDescriptors = 11, flags = DATA_STATIC_WHILE_SET_AT_EXECUTE)," \
 		"SRV(t0, numDescriptors = 16, flags = DESCRIPTORS_VOLATILE | DATA_STATIC_WHILE_SET_AT_EXECUTE)," \
 		"UAV(u0, numDescriptors = 16, flags = DESCRIPTORS_VOLATILE | DATA_STATIC_WHILE_SET_AT_EXECUTE)" \
 	")," \
@@ -37,11 +39,33 @@
 		"SRV(t0, space = 11, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
 		"SRV(t0, space = 12, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
 		"SRV(t0, space = 13, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
-		"UAV(u0, space = 14, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
-		"UAV(u0, space = 15, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
-		"UAV(u0, space = 16, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
-		"UAV(u0, space = 17, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
-		"UAV(u0, space = 18, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)" \
+		"SRV(t0, space = 14, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"SRV(t0, space = 15, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"SRV(t0, space = 16, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"SRV(t0, space = 17, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"SRV(t0, space = 18, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"SRV(t0, space = 19, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"SRV(t0, space = 20, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"UAV(u0, space = 21, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"UAV(u0, space = 22, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"UAV(u0, space = 23, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"UAV(u0, space = 24, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"UAV(u0, space = 25, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"UAV(u0, space = 26, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"UAV(u0, space = 27, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"UAV(u0, space = 28, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"UAV(u0, space = 29, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"UAV(u0, space = 30, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"UAV(u0, space = 31, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"UAV(u0, space = 32, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"UAV(u0, space = 33, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"SRV(t0, space = 34, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"SRV(t0, space = 35, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"SRV(t0, space = 36, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"SRV(t0, space = 37, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"SRV(t0, space = 38, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"SRV(t0, space = 39, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)," \
+		"SRV(t0, space = 40, offset = 0, numDescriptors = unbounded, flags = DESCRIPTORS_VOLATILE | DATA_VOLATILE)" \
 	"), " \
 	"StaticSampler(s100, addressU = TEXTURE_ADDRESS_CLAMP, addressV = TEXTURE_ADDRESS_CLAMP, addressW = TEXTURE_ADDRESS_CLAMP, filter = FILTER_MIN_MAG_MIP_LINEAR)," \
 	"StaticSampler(s101, addressU = TEXTURE_ADDRESS_WRAP, addressV = TEXTURE_ADDRESS_WRAP, addressW = TEXTURE_ADDRESS_WRAP, filter = FILTER_MIN_MAG_MIP_LINEAR)," \
@@ -49,12 +73,12 @@
 	"StaticSampler(s103, addressU = TEXTURE_ADDRESS_CLAMP, addressV = TEXTURE_ADDRESS_CLAMP, addressW = TEXTURE_ADDRESS_CLAMP, filter = FILTER_MIN_MAG_MIP_POINT)," \
 	"StaticSampler(s104, addressU = TEXTURE_ADDRESS_WRAP, addressV = TEXTURE_ADDRESS_WRAP, addressW = TEXTURE_ADDRESS_WRAP, filter = FILTER_MIN_MAG_MIP_POINT)," \
 	"StaticSampler(s105, addressU = TEXTURE_ADDRESS_MIRROR, addressV = TEXTURE_ADDRESS_MIRROR, addressW = TEXTURE_ADDRESS_MIRROR, filter = FILTER_MIN_MAG_MIP_POINT)," \
-	"StaticSampler(s106, addressU = TEXTURE_ADDRESS_CLAMP, addressV = TEXTURE_ADDRESS_CLAMP, addressW = TEXTURE_ADDRESS_CLAMP, filter = FILTER_ANISOTROPIC)," \
-	"StaticSampler(s107, addressU = TEXTURE_ADDRESS_WRAP, addressV = TEXTURE_ADDRESS_WRAP, addressW = TEXTURE_ADDRESS_WRAP, filter = FILTER_ANISOTROPIC)," \
-	"StaticSampler(s108, addressU = TEXTURE_ADDRESS_MIRROR, addressV = TEXTURE_ADDRESS_MIRROR, addressW = TEXTURE_ADDRESS_MIRROR, filter = FILTER_ANISOTROPIC)," \
+	"StaticSampler(s106, addressU = TEXTURE_ADDRESS_CLAMP, addressV = TEXTURE_ADDRESS_CLAMP, addressW = TEXTURE_ADDRESS_CLAMP, filter = FILTER_ANISOTROPIC, maxAnisotropy = 16)," \
+	"StaticSampler(s107, addressU = TEXTURE_ADDRESS_WRAP, addressV = TEXTURE_ADDRESS_WRAP, addressW = TEXTURE_ADDRESS_WRAP, filter = FILTER_ANISOTROPIC, maxAnisotropy = 16)," \
+	"StaticSampler(s108, addressU = TEXTURE_ADDRESS_MIRROR, addressV = TEXTURE_ADDRESS_MIRROR, addressW = TEXTURE_ADDRESS_MIRROR, filter = FILTER_ANISOTROPIC, maxAnisotropy = 16)," \
 	"StaticSampler(s109, addressU = TEXTURE_ADDRESS_CLAMP, addressV = TEXTURE_ADDRESS_CLAMP, addressW = TEXTURE_ADDRESS_CLAMP, filter = FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT, comparisonFunc = COMPARISON_GREATER_EQUAL),"
 
-
+#ifndef __PSSL__
 // These are static samplers, they don't need to be bound:
 //	They are also on slots that are not bindable as sampler bind slots must be in [0,15] range!
 SamplerState sampler_linear_clamp : register(s100);
@@ -67,38 +91,168 @@ SamplerState sampler_aniso_clamp : register(s106);
 SamplerState sampler_aniso_wrap : register(s107);
 SamplerState sampler_aniso_mirror : register(s108);
 SamplerComparisonState sampler_cmp_depth : register(s109);
+#endif // __PSSL__
 
+#if defined(__PSSL__)
+static const BindlessResource<SamplerState> bindless_samplers;
+static const BindlessResource<Texture2D> bindless_textures;
+static const BindlessResource<ByteAddressBuffer> bindless_buffers;
+static const BindlessResource<Buffer<uint>> bindless_buffers_uint;
+static const BindlessResource<Buffer<uint2>> bindless_buffers_uint2;
+static const BindlessResource<Buffer<uint3>> bindless_buffers_uint3;
+static const BindlessResource<Buffer<uint4>> bindless_buffers_uint4;
+static const BindlessResource<Buffer<float>> bindless_buffers_float;
+static const BindlessResource<Buffer<float2>> bindless_buffers_float2;
+static const BindlessResource<Buffer<float3>> bindless_buffers_float3;
+static const BindlessResource<Buffer<float4>> bindless_buffers_float4;
+static const BindlessResource<Texture2DArray> bindless_textures2DArray;
+static const BindlessResource<TextureCube> bindless_cubemaps;
+static const BindlessResource<TextureCubeArray> bindless_cubearrays;
+static const BindlessResource<Texture3D> bindless_textures3D;
+static const BindlessResource<Texture2D<float>> bindless_textures_float;
+static const BindlessResource<Texture2D<float2>> bindless_textures_float2;
+static const BindlessResource<Texture2D<uint>> bindless_textures_uint;
+static const BindlessResource<Texture2D<uint4>> bindless_textures_uint4;
+
+static const BindlessResource<RWTexture2D<float4>> bindless_rwtextures;
+static const BindlessResource<RWByteAddressBuffer> bindless_rwbuffers;
+static const BindlessResource<RWBuffer<uint>> bindless_rwbuffers_uint;
+static const BindlessResource<RWBuffer<uint2>> bindless_rwbuffers_uint2;
+static const BindlessResource<RWBuffer<uint3>> bindless_rwbuffers_uint3;
+static const BindlessResource<RWBuffer<uint4>> bindless_rwbuffers_uint4;
+static const BindlessResource<RWBuffer<float>> bindless_rwbuffers_float;
+static const BindlessResource<RWBuffer<float2>> bindless_rwbuffers_float2;
+static const BindlessResource<RWBuffer<float3>> bindless_rwbuffers_float3;
+static const BindlessResource<RWBuffer<float4>> bindless_rwbuffers_float4;
+static const BindlessResource<RWTexture2DArray<float4>> bindless_rwtextures2DArray;
+static const BindlessResource<RWTexture3D<float4>> bindless_rwtextures3D;
+static const BindlessResource<RWTexture2D<uint>> bindless_rwtextures_uint;
+
+#elif defined(__spirv__)
+// In Vulkan, we can manually overlap descriptor sets to reduce bindings:
+//	Note that HLSL register space declaration was not working correctly with overlapped spaces,
+//	But vk::binding works correctly in this case.
+//	HLSL register space declaration is working well with Vulkan when spaces are not overlapping.
+static const uint DESCRIPTOR_SET_BINDLESS_STORAGE_BUFFER = 1;
+static const uint DESCRIPTOR_SET_BINDLESS_UNIFORM_TEXEL_BUFFER = 2;
+static const uint DESCRIPTOR_SET_BINDLESS_SAMPLER = 3;
+static const uint DESCRIPTOR_SET_BINDLESS_SAMPLED_IMAGE = 4;
+static const uint DESCRIPTOR_SET_BINDLESS_STORAGE_IMAGE = 5;
+static const uint DESCRIPTOR_SET_BINDLESS_STORAGE_TEXEL_BUFFER = 6;
+static const uint DESCRIPTOR_SET_BINDLESS_ACCELERATION_STRUCTURE = 7;
+
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_BUFFER)]] ByteAddressBuffer bindless_buffers[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_UNIFORM_TEXEL_BUFFER)]] Buffer<uint> bindless_buffers_uint[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_UNIFORM_TEXEL_BUFFER)]] Buffer<uint2> bindless_buffers_uint2[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_UNIFORM_TEXEL_BUFFER)]] Buffer<uint3> bindless_buffers_uint3[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_UNIFORM_TEXEL_BUFFER)]] Buffer<uint4> bindless_buffers_uint4[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_UNIFORM_TEXEL_BUFFER)]] Buffer<float> bindless_buffers_float[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_UNIFORM_TEXEL_BUFFER)]] Buffer<float2> bindless_buffers_float2[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_UNIFORM_TEXEL_BUFFER)]] Buffer<float3> bindless_buffers_float3[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_UNIFORM_TEXEL_BUFFER)]] Buffer<float4> bindless_buffers_float4[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_SAMPLER)]] SamplerState bindless_samplers[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_SAMPLED_IMAGE)]] Texture2D bindless_textures[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_SAMPLED_IMAGE)]] Texture2DArray bindless_textures2DArray[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_SAMPLED_IMAGE)]] TextureCube bindless_cubemaps[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_SAMPLED_IMAGE)]] TextureCubeArray bindless_cubearrays[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_SAMPLED_IMAGE)]] Texture3D bindless_textures3D[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_SAMPLED_IMAGE)]] Texture2D<float> bindless_textures_float[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_SAMPLED_IMAGE)]] Texture2D<float2> bindless_textures_float2[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_SAMPLED_IMAGE)]] Texture2D<uint> bindless_textures_uint[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_SAMPLED_IMAGE)]] Texture2D<uint4> bindless_textures_uint4[];
+
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_BUFFER)]] RWByteAddressBuffer bindless_rwbuffers[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_TEXEL_BUFFER)]] RWBuffer<uint> bindless_rwbuffers_uint[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_TEXEL_BUFFER)]] RWBuffer<uint2> bindless_rwbuffers_uint2[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_TEXEL_BUFFER)]] RWBuffer<uint3> bindless_rwbuffers_uint3[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_TEXEL_BUFFER)]] RWBuffer<uint4> bindless_rwbuffers_uint4[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_TEXEL_BUFFER)]] RWBuffer<float> bindless_rwbuffers_float[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_TEXEL_BUFFER)]] RWBuffer<float2> bindless_rwbuffers_float2[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_TEXEL_BUFFER)]] RWBuffer<float3> bindless_rwbuffers_float3[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_TEXEL_BUFFER)]] RWBuffer<float4> bindless_rwbuffers_float4[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_IMAGE)]] RWTexture2D<float4> bindless_rwtextures[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_IMAGE)]] RWTexture2DArray<float4> bindless_rwtextures2DArray[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_IMAGE)]] RWTexture3D<float4> bindless_rwtextures3D[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_IMAGE)]] RWTexture2D<uint> bindless_rwtextures_uint[];
+#ifdef RTAPI
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_ACCELERATION_STRUCTURE)]] RaytracingAccelerationStructure bindless_accelerationstructures[];
+#endif // RTAPI
+
+#else
 SamplerState bindless_samplers[] : register(space1);
 Texture2D bindless_textures[] : register(space2);
 ByteAddressBuffer bindless_buffers[] : register(space3);
-Buffer<uint> bindless_ib[] : register(space4);
+Buffer<uint> bindless_buffers_uint[] : register(space4);
+Buffer<uint2> bindless_buffers_uint2[] : register(space5);
+Buffer<uint3> bindless_buffers_uint3[] : register(space6);
+Buffer<uint4> bindless_buffers_uint4[] : register(space7);
+Buffer<float> bindless_buffers_float[] : register(space8);
+Buffer<float2> bindless_buffers_float2[] : register(space9);
+Buffer<float3> bindless_buffers_float3[] : register(space10);
+Buffer<float4> bindless_buffers_float4[] : register(space11);
 #ifdef RTAPI
-RaytracingAccelerationStructure bindless_accelerationstructures[] : register(space5);
+RaytracingAccelerationStructure bindless_accelerationstructures[] : register(space12);
 #endif // RTAPI
-Texture2DArray bindless_textures2DArray[] : register(space6);
-TextureCube bindless_cubemaps[] : register(space7);
-TextureCubeArray bindless_cubearrays[] : register(space8);
-Texture3D bindless_textures3D[] : register(space9);
-Texture2D<float> bindless_textures_float[] : register(space10);
-Texture2D<float2> bindless_textures_float2[] : register(space11);
-Texture2D<uint> bindless_textures_uint[] : register(space12);
-Texture2D<uint4> bindless_textures_uint4[] : register(space13);
+Texture2DArray bindless_textures2DArray[] : register(space13);
+TextureCube bindless_cubemaps[] : register(space14);
+TextureCubeArray bindless_cubearrays[] : register(space15);
+Texture3D bindless_textures3D[] : register(space16);
+Texture2D<float> bindless_textures_float[] : register(space17);
+Texture2D<float2> bindless_textures_float2[] : register(space18);
+Texture2D<uint> bindless_textures_uint[] : register(space19);
+Texture2D<uint4> bindless_textures_uint4[] : register(space20);
 
-RWTexture2D<float4> bindless_rwtextures[] : register(space14);
-RWByteAddressBuffer bindless_rwbuffers[] : register(space15);
-RWTexture2DArray<float4> bindless_rwtextures2DArray[] : register(space16);
-RWTexture3D<float4> bindless_rwtextures3D[] : register(space17);
-RWTexture2D<uint> bindless_rwtextures_uint[] : register(space18);
+RWTexture2D<float4> bindless_rwtextures[] : register(space21);
+RWByteAddressBuffer bindless_rwbuffers[] : register(space22);
+RWBuffer<uint> bindless_rwbuffers_uint[] : register(space23);
+RWBuffer<uint2> bindless_rwbuffers_uint2[] : register(space24);
+RWBuffer<uint3> bindless_rwbuffers_uint3[] : register(space25);
+RWBuffer<uint4> bindless_rwbuffers_uint4[] : register(space26);
+RWBuffer<float> bindless_rwbuffers_float[] : register(space27);
+RWBuffer<float2> bindless_rwbuffers_float2[] : register(space28);
+RWBuffer<float3> bindless_rwbuffers_float3[] : register(space29);
+RWBuffer<float4> bindless_rwbuffers_float4[] : register(space30);
+RWTexture2DArray<float4> bindless_rwtextures2DArray[] : register(space31);
+RWTexture3D<float4> bindless_rwtextures3D[] : register(space32);
+RWTexture2D<uint> bindless_rwtextures_uint[] : register(space33);
+
+#endif // __spirv__
 
 #include "ShaderInterop_Renderer.h"
+
+#if defined(__PSSL__)
+static const BindlessResource<StructuredBuffer<ShaderMeshInstance>> bindless_structured_meshinstance;
+static const BindlessResource<StructuredBuffer<ShaderGeometry>> bindless_structured_geometry;
+static const BindlessResource<StructuredBuffer<ShaderMeshlet>> bindless_structured_meshlet;
+static const BindlessResource<StructuredBuffer<ShaderMaterial>> bindless_structured_material;
+static const BindlessResource<StructuredBuffer<ShaderEntity>> bindless_structured_entity;
+static const BindlessResource<StructuredBuffer<float4x4>> bindless_structured_matrix;
+static const BindlessResource<StructuredBuffer<uint>> bindless_structured_uint;
+#elif defined(__spirv__)
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_BUFFER)]] StructuredBuffer<ShaderMeshInstance> bindless_structured_meshinstance[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_BUFFER)]] StructuredBuffer<ShaderGeometry> bindless_structured_geometry[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_BUFFER)]] StructuredBuffer<ShaderMeshlet> bindless_structured_meshlet[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_BUFFER)]] StructuredBuffer<ShaderMaterial> bindless_structured_material[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_BUFFER)]] StructuredBuffer<ShaderEntity> bindless_structured_entity[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_BUFFER)]] StructuredBuffer<float4x4> bindless_structured_matrix[];
+[[vk::binding(0, DESCRIPTOR_SET_BINDLESS_STORAGE_BUFFER)]] StructuredBuffer<uint> bindless_structured_uint[];
+#else
+StructuredBuffer<ShaderMeshInstance> bindless_structured_meshinstance[] : register(space34);
+StructuredBuffer<ShaderGeometry> bindless_structured_geometry[] : register(space35);
+StructuredBuffer<ShaderMeshlet> bindless_structured_meshlet[] : register(space36);
+StructuredBuffer<ShaderMaterial> bindless_structured_material[] : register(space37);
+StructuredBuffer<ShaderEntity> bindless_structured_entity[] : register(space38);
+StructuredBuffer<float4x4> bindless_structured_matrix[] : register(space39);
+StructuredBuffer<uint> bindless_structured_uint[] : register(space40);
+#endif // __spirv__
 
 inline FrameCB GetFrame()
 {
 	return g_xFrame;
 }
-inline CameraCB GetCamera()
+inline ShaderCamera GetCamera(uint camera_index = 0)
 {
-	return g_xCamera;
+	return g_xCamera.cameras[camera_index];
 }
 inline ShaderScene GetScene()
 {
@@ -110,27 +264,35 @@ inline ShaderWeather GetWeather()
 }
 inline ShaderMeshInstance load_instance(uint instanceIndex)
 {
-	return bindless_buffers[GetScene().instancebuffer].Load<ShaderMeshInstance>(instanceIndex * sizeof(ShaderMeshInstance));
+	return bindless_structured_meshinstance[GetScene().instancebuffer][instanceIndex];
 }
 inline ShaderGeometry load_geometry(uint geometryIndex)
 {
-	return bindless_buffers[GetScene().geometrybuffer].Load<ShaderGeometry>(geometryIndex * sizeof(ShaderGeometry));
+	return bindless_structured_geometry[GetScene().geometrybuffer][geometryIndex];
 }
 inline ShaderMeshlet load_meshlet(uint meshletIndex)
 {
-	return bindless_buffers[GetScene().meshletbuffer].Load<ShaderMeshlet>(meshletIndex * sizeof(ShaderMeshlet));
+	return bindless_structured_meshlet[GetScene().meshletbuffer][meshletIndex];
 }
 inline ShaderMaterial load_material(uint materialIndex)
 {
-	return bindless_buffers[GetScene().materialbuffer].Load<ShaderMaterial>(materialIndex * sizeof(ShaderMaterial));
+	return bindless_structured_material[GetScene().materialbuffer][materialIndex];
+}
+uint load_entitytile(uint tileIndex)
+{
+#ifdef TRANSPARENT
+	return bindless_structured_uint[GetCamera().buffer_entitytiles_transparent_index][tileIndex];
+#else
+	return bindless_structured_uint[GetCamera().buffer_entitytiles_opaque_index][tileIndex];
+#endif // TRANSPARENT
 }
 inline ShaderEntity load_entity(uint entityIndex)
 {
-	return bindless_buffers[GetFrame().buffer_entityarray_index].Load<ShaderEntity>(entityIndex * sizeof(ShaderEntity));
+	return bindless_structured_entity[GetFrame().buffer_entity_index][entityIndex];
 }
 inline float4x4 load_entitymatrix(uint matrixIndex)
 {
-	return transpose(bindless_buffers[GetFrame().buffer_entitymatrixarray_index].Load<float4x4>(matrixIndex * sizeof(float4x4)));
+	return bindless_structured_matrix[GetFrame().buffer_entity_index][SHADER_ENTITY_COUNT + matrixIndex];
 }
 
 struct PrimitiveID
@@ -142,23 +304,23 @@ struct PrimitiveID
 	// These packing methods require meshlet data, and pack into 32 bits:
 	inline uint pack()
 	{
-		// 1 bit valid flag
-		// 23 bit meshletIndex
+		// 24 bit meshletIndex
 		// 8  bit meshletPrimitiveIndex
 		ShaderMeshInstance inst = load_instance(instanceIndex);
 		ShaderGeometry geometry = load_geometry(inst.geometryOffset + subsetIndex);
 		uint meshletIndex = inst.meshletOffset + geometry.meshletOffset + primitiveIndex / MESHLET_TRIANGLE_COUNT;
-		meshletIndex &= ~0u >> 9u; // mask 23 active bits
+		meshletIndex += 1; // indicate that it is valid
+		meshletIndex &= ~0u >> 8u; // mask 24 active bits
 		uint meshletPrimitiveIndex = primitiveIndex % MESHLET_TRIANGLE_COUNT;
 		meshletPrimitiveIndex &= 0xFF; // mask 8 active bits
-		meshletPrimitiveIndex <<= 23u;
-		return (1u << 31u) | meshletPrimitiveIndex | meshletIndex;
+		meshletPrimitiveIndex <<= 24u;
+		return meshletPrimitiveIndex | meshletIndex;
 	}
 	inline void unpack(uint value)
 	{
-		value ^= 1u << 31u; // remove valid flag
-		uint meshletIndex = value & (~0u >> 9u);
-		uint meshletPrimitiveIndex = (value >> 23u) & 0xFF;
+		uint meshletIndex = value & (~0u >> 8u);
+		meshletIndex -= 1; // remove valid check
+		uint meshletPrimitiveIndex = (value >> 24u) & 0xFF;
 		ShaderMeshlet meshlet = load_meshlet(meshletIndex);
 		ShaderMeshInstance inst = load_instance(meshlet.instanceIndex);
 		primitiveIndex = meshlet.primitiveOffset + meshletPrimitiveIndex;
@@ -169,22 +331,18 @@ struct PrimitiveID
 	// These packing methods don't need meshlets, but they are packed into 64 bits:
 	uint2 pack2()
 	{
-		// 1 bit valid flag
-		// 31 bit primitiveIndex
+		// 32 bit primitiveIndex + 1 valid check
 		// 24 bit instanceIndex
 		// 8  bit subsetIndex
-		return uint2((1u << 31u) | primitiveIndex, (instanceIndex & 0xFFFFFF) | ((subsetIndex & 0xFF) << 24u));
+		return uint2(primitiveIndex + 1, (instanceIndex & 0xFFFFFF) | ((subsetIndex & 0xFF) << 24u));
 	}
 	void unpack2(uint2 value)
 	{
-		primitiveIndex = value.x & (~0u >> 1u);
+		primitiveIndex = value.x - 1; // remove valid check
 		instanceIndex = value.y & 0xFFFFFF;
 		subsetIndex = (value.y >> 24u) & 0xFF;
 	}
 };
-
-#define texture_globalenvmap bindless_cubemaps[GetScene().globalenvmap]
-#define texture_envmaparray bindless_cubearrays[GetScene().envmaparray]
 
 #define texture_random64x64 bindless_textures[GetFrame().texture_random64x64_index]
 #define texture_bluenoise bindless_textures[GetFrame().texture_bluenoise_index]
@@ -193,7 +351,9 @@ struct PrimitiveID
 #define texture_transmittancelut bindless_textures[GetFrame().texture_transmittancelut_index]
 #define texture_multiscatteringlut bindless_textures[GetFrame().texture_multiscatteringlut_index]
 #define texture_skyluminancelut bindless_textures[GetFrame().texture_skyluminancelut_index]
-#define texture_voxelgi bindless_textures3D[GetFrame().texture_voxelgi_index]
+#define texture_cameravolumelut bindless_textures3D[GetFrame().texture_cameravolumelut_index]
+#define texture_wind bindless_textures3D[GetFrame().texture_wind_index]
+#define texture_wind_prev bindless_textures3D[GetFrame().texture_wind_prev_index]
 #define scene_acceleration_structure bindless_accelerationstructures[GetScene().TLAS]
 
 #define texture_depth bindless_textures_float[GetCamera().texture_depth_index]
@@ -204,17 +364,16 @@ struct PrimitiveID
 #define texture_normal bindless_textures_float2[GetCamera().texture_normal_index]
 #define texture_roughness bindless_textures_float[GetCamera().texture_roughness_index]
 
-#define PI 3.14159265358979323846
-#define SQRT2 1.41421356237309504880
-#define FLT_MAX 3.402823466e+38
-#define FLT_EPSILON 1.192092896e-07
-#define GOLDEN_RATIO 1.6180339887
+static const float PI = 3.14159265358979323846;
+static const float SQRT2 = 1.41421356237309504880;
+static const float FLT_MAX = 3.402823466e+38;
+static const float FLT_EPSILON = 1.192092896e-07;
+static const float GOLDEN_RATIO = 1.6180339887;
+static const float M_TO_SKY_UNIT = 0.001f; // Engine units are in meters
+static const float SKY_UNIT_TO_M = rcp(M_TO_SKY_UNIT);
 
-#define sqr(a)		((a)*(a))
+#define sqr(a) ((a)*(a))
 #define pow5(x) pow(x, 5)
-
-#define M_TO_SKY_UNIT 0.001f // Engine units are in meters
-#define SKY_UNIT_TO_M (1.0 / M_TO_SKY_UNIT)
 
 // attribute computation with barycentric interpolation
 //	a0 : attribute at triangle corner 0
@@ -240,9 +399,26 @@ inline float4 attribute_at_bary(in float4 a0, in float4 a1, in float4 a2, in flo
 }
 
 inline bool is_saturated(float a) { return a == saturate(a); }
-inline bool is_saturated(float2 a) { return is_saturated(a.x) && is_saturated(a.y); }
-inline bool is_saturated(float3 a) { return is_saturated(a.x) && is_saturated(a.y) && is_saturated(a.z); }
-inline bool is_saturated(float4 a) { return is_saturated(a.x) && is_saturated(a.y) && is_saturated(a.z) && is_saturated(a.w); }
+inline bool is_saturated(float2 a) { return all(a == saturate(a)); }
+inline bool is_saturated(float3 a) { return all(a == saturate(a)); }
+inline bool is_saturated(float4 a) { return all(a == saturate(a)); }
+
+inline uint align(uint value, uint alignment)
+{
+	return ((value + alignment - 1) / alignment) * alignment;
+}
+inline uint2 align(uint2 value, uint2 alignment)
+{
+	return ((value + alignment - 1) / alignment) * alignment;
+}
+inline uint3 align(uint3 value, uint3 alignment)
+{
+	return ((value + alignment - 1) / alignment) * alignment;
+}
+inline uint4 align(uint4 value, uint4 alignment)
+{
+	return ((value + alignment - 1) / alignment) * alignment;
+}
 
 inline float2 uv_to_clipspace(in float2 uv)
 {
@@ -259,9 +435,11 @@ inline float3 clipspace_to_uv(in float3 clipspace)
 	return clipspace * float3(0.5, -0.5, 0.5) + 0.5;
 }
 
-#define DEGAMMA_SKY(x)	((GetFrame().options & OPTION_BIT_STATIC_SKY_HDR) ? (x) : RemoveSRGBCurve_Fast(x))
-#define DEGAMMA(x)		(RemoveSRGBCurve_Fast(x))
-#define GAMMA(x)		(ApplySRGBCurve_Fast(x))
+template<typename T>
+T inverse_lerp(T value1, T value2, T pos)
+{
+	return all(value2 == value1) ? 0 : ((pos - value1) / (value2 - value1));
+}
 
 inline float3 GetSunColor() { return GetWeather().sun_color; } // sun color with intensity applied
 inline float3 GetSunDirection() { return GetWeather().sun_direction; }
@@ -270,50 +448,9 @@ inline float3 GetZenithColor() { return GetWeather().zenith.rgb; }
 inline float3 GetAmbientColor() { return GetWeather().ambient.rgb; }
 inline uint2 GetInternalResolution() { return GetCamera().internal_resolution; }
 inline float GetTime() { return GetFrame().time; }
+inline float GetTimePrev() { return GetFrame().time_previous; }
 inline uint2 GetTemporalAASampleRotation() { return uint2((GetFrame().temporalaa_samplerotation >> 0u) & 0x000000FF, (GetFrame().temporalaa_samplerotation >> 8) & 0x000000FF); }
 inline bool IsStaticSky() { return GetScene().globalenvmap >= 0; }
-
-// Exponential height fog based on: https://www.iquilezles.org/www/articles/fog/fog.htm
-// Non constant density function
-//	distance	: sample to point distance
-//	O			: sample position
-//	V			: sample to point vector
-inline float GetFogAmount(float distance, float3 O, float3 V)
-{
-	ShaderFog fog = GetWeather().fog;
-	float fogDensity = saturate((distance - fog.start) / (fog.end - fog.start));
-
-	if (GetFrame().options & OPTION_BIT_HEIGHT_FOG)
-	{
-		float fogFalloffScale = 1.0 / max(0.01, fog.height_end - fog.height_start);
-
-		// solve for x, e^(-h * x) = 0.001
-		// x = 6.907755 * h^-1
-		float fogFalloff = 6.907755 * fogFalloffScale;
-		
-		float originHeight = O.y;
-		float Z = -V.y;
-		float effectiveZ = max(abs(Z), 0.001);
-
-		float endLineHeight = mad(distance, Z, originHeight); // Isolated vector equation for y
-		float minLineHeight = min(originHeight, endLineHeight);
-		float heightLineFalloff = max(minLineHeight - fog.height_start, 0);
-		
-		float baseHeightFogDistance = clamp((fog.height_start - minLineHeight) / effectiveZ, 0, distance);
-		float exponentialFogDistance = distance - baseHeightFogDistance; // Exclude distance below base height
-		float exponentialHeightLineIntegral = exp(-heightLineFalloff * fogFalloff) * (1.0 - exp(-exponentialFogDistance * effectiveZ * fogFalloff)) / (effectiveZ * fogFalloff);
-		
-		float opticalDepthHeightFog = fogDensity * (baseHeightFogDistance + exponentialHeightLineIntegral);
-		float transmittanceHeightFog = exp(-opticalDepthHeightFog);
-		
-		float fogAmount = transmittanceHeightFog;
-		return 1.0 - fogAmount;
-	}
-	else
-	{
-		return fogDensity;
-	}
-}
 
 inline float3 tonemap(float3 x)
 {
@@ -469,6 +606,38 @@ float noise_gradient_3D(in float3 p)
 			dot(hash_gradient_3D(i + float3(1.0, 0.0, 1.0)), f - float3(1.0, 0.0, 1.0)), u.x),
 			lerp(dot(hash_gradient_3D(i + float3(0.0, 1.0, 1.0)), f - float3(0.0, 1.0, 1.0)),
 				dot(hash_gradient_3D(i + float3(1.0, 1.0, 1.0)), f - float3(1.0, 1.0, 1.0)), u.x), u.y), u.z);
+}
+
+
+// Based on: https://www.shadertoy.com/view/MslGD8
+float2 hash_voronoi(float2 p)
+{
+    //p = mod(p, 4.0); // tile
+	p = float2(dot(p, float2(127.1, 311.7)),
+             dot(p, float2(269.5, 183.3)));
+	return frac(sin(p) * 18.5453);
+}
+
+// return distance, and cell id
+float2 noise_voronoi(in float2 x, in float seed)
+{
+	float2 n = floor(x);
+	float2 f = frac(x);
+
+	float3 m = 8.0;
+	for (int j = -1; j <= 1; j++)
+		for (int i = -1; i <= 1; i++)
+		{
+			float2 g = float2(float(i), float(j));
+			float2 o = hash_voronoi(n + g);
+			//float2  r = g - f + o;
+			float2 r = g - f + (0.5 + 0.5 * sin(seed + 6.2831 * o));
+			float d = dot(r, r);
+			if (d < m.x)
+				m = float3(d, o);
+		}
+
+	return float2(sqrt(m.x), m.y + m.z);
 }
 
 // https://www.shadertoy.com/view/llGSzw
@@ -638,6 +807,22 @@ inline float3 reconstruct_position(in float2 uv, in float z, in float4x4 inverse
 inline float3 reconstruct_position(in float2 uv, in float z)
 {
 	return reconstruct_position(uv, z, GetCamera().inverse_view_projection);
+}
+
+inline float find_max_depth(in float2 uv, in int radius, in float lod)
+{
+	uint2 dim;
+	texture_depth.GetDimensions(dim.x, dim.y);
+	float2 dim_rcp = rcp(dim);
+	float ret = 0;
+	for (int x = -radius; x <= radius;++x)
+	{
+		for (int y = -radius; y <= radius;++y)
+		{
+			ret = max(ret, texture_depth.SampleLevel(sampler_point_clamp, uv + float2(x, y) * dim_rcp, lod));
+		}
+	}
+	return ret;
 }
 
 // Caustic pattern from: https://www.shadertoy.com/view/XtKfRG
@@ -1035,6 +1220,15 @@ inline float dither(in float2 pixel)
 }
 
 
+inline float sphere_surface_area(in float radius)
+{
+	return 4 * PI * radius * radius;
+}
+inline float sphere_volume(in float radius)
+{
+	return 4.0 / 3.0 * PI * radius * radius * radius;
+}
+
 
 float plane_point_distance(float3 planeOrigin, float3 planeNormal, float3 P)
 {
@@ -1251,25 +1445,24 @@ RayCone pixel_ray_cone_from_image_height(float image_height)
 }
 
 
-float3 compute_wind(float3 position, float weight)
+float3 sample_wind(float3 position, float weight)
 {
 	[branch]
 	if (weight > 0)
 	{
-		const float time = GetTime();
-		position += time;
-		const ShaderWind wind = GetWeather().wind;
-
-		float randomness_amount = 0;
-		randomness_amount += noise_gradient_3D(position.xyz);
-		randomness_amount += noise_gradient_3D(position.xyz * 0.1);
-		randomness_amount *= wind.randomness;
-
-		float direction_amount = dot(position.xyz, wind.direction);
-		float waveoffset = mad(direction_amount, wind.wavesize, randomness_amount);
-		float3 wavedir = wind.direction * weight;
-
-		return sin(mad(time, wind.speed, waveoffset)) * wavedir;
+		return texture_wind.SampleLevel(sampler_linear_mirror, position, 0).r * GetWeather().wind.direction * weight;
+	}
+	else
+	{
+		return 0;
+	}
+}
+float3 sample_wind_prev(float3 position, float weight)
+{
+	[branch]
+	if (weight > 0)
+	{
+		return texture_wind_prev.SampleLevel(sampler_linear_mirror, position, 0).r * GetWeather().wind.direction * weight;
 	}
 	else
 	{
@@ -1355,7 +1548,7 @@ enum class ColorSpace
 };
 
 
-#define NUM_PARALLAX_OCCLUSION_STEPS 32
+static const uint NUM_PARALLAX_OCCLUSION_STEPS = 32;
 inline void ParallaxOcclusionMapping_Impl(
 	inout float4 uvsets,		// uvsets to modify
 	in float3 V,				// view vector (pointing towards camera)

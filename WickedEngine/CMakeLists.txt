@@ -1,3 +1,5 @@
+set(MIN_OpenImageDenoise_VERSION "2.0")
+
 
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
@@ -18,12 +20,12 @@ if (WIN32)
 else ()
 	set(TARGET_NAME WickedEngine_Linux)
 	find_package(SDL2 REQUIRED)
-	find_package(OpenImageDenoise QUIET)
+	find_package(OpenImageDenoise "${MIN_OpenImageDenoise_VERSION}" QUIET)
 	find_package(Threads REQUIRED)
 	if(NOT ${OpenImageDenoise_FOUND})
-		message("OpenImageDenoise not found, it will be disabled.")
+		message("OpenImageDenoise>=${MIN_OpenImageDenoise_VERSION} not found, it will be disabled.")
 	else()
-		message("OpenImageDenoise Found.")
+		message("OpenImageDenoise ${OpenImageDenoise_VERSION} Found.")
 	endif()
 
 	if(NOT TARGET SDL2::SDL2)
@@ -142,6 +144,8 @@ set(HEADER_FILES
 		wiTerrain.h
 		wiAllocator.h
 		wiBVH.h
+		wiLocalization.h
+		wiVideo.h
 		)
 
 add_library(${TARGET_NAME} ${WICKED_LIBRARY_TYPE}
@@ -214,6 +218,8 @@ add_library(${TARGET_NAME} ${WICKED_LIBRARY_TYPE}
 	wiShaderCompiler.cpp
 	wiConfig.cpp
 	wiTerrain.cpp
+	wiLocalization.cpp
+	wiVideo.cpp
 	${HEADER_FILES}
 )
 add_library(WickedEngine ALIAS ${TARGET_NAME})
@@ -278,13 +284,13 @@ endif()
 
 add_library(dxcompiler SHARED IMPORTED)
 set_property(TARGET dxcompiler PROPERTY
-		IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/WickedEngine/${LIBDXCOMPILER} )
+		IMPORTED_LOCATION ${WICKED_ROOT_DIR}/WickedEngine/${LIBDXCOMPILER} )
 
 # Copy the shader library next to the executable
 add_custom_command(
 		TARGET ${TARGET_NAME} POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/WickedEngine/${LIBDXCOMPILER} ${CMAKE_CURRENT_BINARY_DIR}
-		COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_SOURCE_DIR}/WickedEngine/shaders ${CMAKE_CURRENT_BINARY_DIR}/shaders
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${WICKED_ROOT_DIR}/WickedEngine/${LIBDXCOMPILER} ${CMAKE_CURRENT_BINARY_DIR}
+		COMMAND ${CMAKE_COMMAND} -E create_symlink ${WICKED_ROOT_DIR}/WickedEngine/shaders ${CMAKE_CURRENT_BINARY_DIR}/shaders
 )
 
 
@@ -299,7 +305,7 @@ target_link_libraries(offlineshadercompiler
 install(TARGETS offlineshadercompiler
 		RUNTIME DESTINATION "${CMAKE_INSTALL_LIBDIR}/WickedEngine")
 
-install(DIRECTORY "${CMAKE_SOURCE_DIR}/Content"
+install(DIRECTORY "${WICKED_ROOT_DIR}/Content"
 		DESTINATION "${CMAKE_INSTALL_LIBDIR}/WickedEngine")
 
 #### LOCAL FOLDER INSTALLATION
@@ -328,8 +334,8 @@ install(EXPORT Engine-Targets
 		NAMESPACE WickedEngine::
 		DESTINATION ${INSTALL_CONFIGDIR})
 
-set(_CONFIG_INSTALL_DIR_INCLUDE "${CMAKE_SOURCE_DIR}")
-set(_CONFIG_INSTALL_DIR_LIB "${CMAKE_SOURCE_DIR}")
+set(_CONFIG_INSTALL_DIR_INCLUDE "${WICKED_ROOT_DIR}")
+set(_CONFIG_INSTALL_DIR_LIB "${WICKED_ROOT_DIR}")
 configure_package_config_file(
 		${CMAKE_CURRENT_SOURCE_DIR}/WickedEngineConfig.cmake.in
 		${CMAKE_BINARY_DIR}/cmake/WickedEngineConfig.cmake

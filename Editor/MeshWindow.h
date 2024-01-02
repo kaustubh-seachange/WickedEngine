@@ -1,6 +1,4 @@
 #pragma once
-#include "WickedEngine.h"
-
 class EditorComponent;
 
 class MeshWindow : public wi::gui::Window
@@ -14,10 +12,13 @@ public:
 	void SetEntity(wi::ecs::Entity entity, int subset);
 
 	wi::gui::Label meshInfoLabel;
+	wi::gui::Button subsetRemoveButton;
 	wi::gui::ComboBox subsetComboBox;
 	wi::gui::ComboBox subsetMaterialComboBox;
 	wi::gui::CheckBox doubleSidedCheckBox;
 	wi::gui::CheckBox doubleSidedShadowCheckBox;
+	wi::gui::CheckBox bvhCheckBox;
+	wi::gui::CheckBox quantizeCheckBox;
 	wi::gui::Button impostorCreateButton;
 	wi::gui::Slider impostorDistanceSlider;
 	wi::gui::Slider tessellationFactorSlider;
@@ -29,6 +30,7 @@ public:
 	wi::gui::Button recenterToBottomButton;
 	wi::gui::Button mergeButton;
 	wi::gui::Button optimizeButton;
+	wi::gui::Button exportHeaderButton;
 
 	wi::gui::ComboBox morphTargetCombo;
 	wi::gui::Slider morphTargetSlider;

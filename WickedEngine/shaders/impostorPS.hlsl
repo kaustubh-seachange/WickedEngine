@@ -10,7 +10,6 @@ float4 main(VSOut input) : SV_Target
 	float3 uv_sur = float3(input.uv, input.slice + 2);
 
 	float4 baseColor = impostorTex.Sample(sampler_linear_clamp, uv_col);
-	baseColor.rgb = DEGAMMA(baseColor.rgb);
 	baseColor *= unpack_rgba(input.instanceColor);
 	float3 N = impostorTex.Sample(sampler_linear_clamp, uv_nor).rgb * 2 - 1;
 	float4 surfaceparams = impostorTex.Sample(sampler_linear_clamp, uv_sur);
@@ -55,13 +54,17 @@ float4 main(VSOut input) : SV_Target
 	Lighting lighting;
 	lighting.create(0, 0, GetAmbient(surface.N), 0);
 
-	TiledLighting(surface, lighting);
+	TiledLighting(surface, lighting, GetFlatTileIndex(pixel));
 
 	float4 color = 0;
 
 	ApplyLighting(surface, lighting, color);
 
-	ApplyFog(dist, GetCamera().position, V, color);
-
+#ifdef TRANSPARENT
+	ApplyAerialPerspective(ScreenCoord, surface.P, color);
+#endif // TRANSPARENT
+	
+	ApplyFog(dist, V, color);
+	
 	return color;
 }

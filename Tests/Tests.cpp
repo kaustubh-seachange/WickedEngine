@@ -1,11 +1,4 @@
 #include "stdafx.h"
-#include "Tests.h"
-
-#include <string>
-#include <fstream>
-#include <thread>
-#include <unordered_map>
-#include <vector>
 
 using namespace wi::ecs;
 using namespace wi::scene;
@@ -135,6 +128,7 @@ void TestsRenderer::Load()
 	direction.OnSlide([](wi::gui::EventArgs args) {
 		wi::audio::SoundInstance3D instance3D;
 		instance3D.emitterPos = XMFLOAT3(args.fValue, 0, 0);
+		instance3D.listenerPos = XMFLOAT3(0, 0, -0.1f);
 		wi::audio::Update3D(&soundinstance, instance3D);
 		});
 	gui.AddWidget(&direction);

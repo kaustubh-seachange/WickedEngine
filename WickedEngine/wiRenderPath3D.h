@@ -21,6 +21,14 @@ namespace wi
 			AO_RTAO,		// ray traced ambient occlusion
 			// Don't alter order! (bound to lua manually)
 		};
+		enum class FSR2_Preset
+		{
+			// Guidelines: https://github.com/GPUOpen-Effects/FidelityFX-FSR2#scaling-modes
+			Quality,
+			Balanced,
+			Performance,
+			Ultra_Performance,
+		};
 	private:
 		float exposure = 1.0f;
 		float brightness = 0.0f;
@@ -42,10 +50,12 @@ namespace wi
 		float eyeadaptionKey = 0.115f;
 		float eyeadaptionRate = 1;
 		float fsrSharpness = 1.0f;
+		float fsr2Sharpness = 0.5f;
 		float lightShaftsStrength = 0.2f;
 		float raytracedDiffuseRange = 10;
 		float raytracedReflectionsRange = 10000.0f;
 		float reflectionRoughnessCutoff = 0.6f;
+		wi::renderer::Tonemap tonemap = wi::renderer::Tonemap::ACES;
 
 		AO ao = AO_DISABLED;
 		bool fxaaEnabled = false;
@@ -69,6 +79,8 @@ namespace wi
 		bool occlusionCullingEnabled = true;
 		bool sceneUpdateEnabled = true;
 		bool fsrEnabled = false;
+		bool fsr2Enabled = false;
+		bool vxgiResolveFullResolution = false;
 
 		uint32_t msaaSampleCount = 1;
 
@@ -106,17 +118,6 @@ namespace wi
 		wi::graphics::Texture depthBuffer_Reflection; // used for reflection, single sample
 		wi::graphics::Texture rtLinearDepth; // linear depth result + mipchain (max filter)
 
-		wi::graphics::RenderPass renderpass_depthprepass;
-		wi::graphics::RenderPass renderpass_main;
-		wi::graphics::RenderPass renderpass_transparent;
-		wi::graphics::RenderPass renderpass_reflection_depthprepass;
-		wi::graphics::RenderPass renderpass_reflection;
-		wi::graphics::RenderPass renderpass_lightshafts;
-		wi::graphics::RenderPass renderpass_volumetriclight;
-		wi::graphics::RenderPass renderpass_particledistortion;
-		wi::graphics::RenderPass renderpass_waterripples;
-		wi::graphics::RenderPass renderpass_outline_source;
-
 		wi::graphics::Texture debugUAV; // debug UAV can be used by some shaders...
 		wi::renderer::TiledLightResources tiledLightResources;
 		wi::renderer::TiledLightResources tiledLightResources_planarReflection;
@@ -131,12 +132,19 @@ namespace wi
 		wi::renderer::ScreenSpaceShadowResources screenspaceshadowResources;
 		wi::renderer::DepthOfFieldResources depthoffieldResources;
 		wi::renderer::MotionBlurResources motionblurResources;
+		wi::renderer::AerialPerspectiveResources aerialperspectiveResources;
+		wi::renderer::AerialPerspectiveResources aerialperspectiveResources_reflection;
 		wi::renderer::VolumetricCloudResources volumetriccloudResources;
 		wi::renderer::VolumetricCloudResources volumetriccloudResources_reflection;
 		wi::renderer::BloomResources bloomResources;
 		wi::renderer::SurfelGIResources surfelGIResources;
 		wi::renderer::TemporalAAResources temporalAAResources;
 		wi::renderer::VisibilityResources visibilityResources;
+		wi::renderer::FSR2Resources fsr2Resources;
+		wi::renderer::VXGIResources vxgiResources;
+
+		wi::graphics::CommandList video_cmd;
+		wi::vector<wi::video::VideoInstance*> video_instances_tmp;
 
 		mutable const wi::graphics::Texture* lastPostprocessRT = &rtPostprocess;
 		// Post-processes are ping-ponged, this function helps to obtain the last postprocess render target that was written
@@ -168,15 +176,31 @@ namespace wi
 
 		FrameCB frameCB = {};
 
-		uint8_t instanceInclusionMask_RTAO = 0xFF;
-		uint8_t instanceInclusionMask_RTShadow = 0xFF;
-		uint8_t instanceInclusionMask_RTDiffuse = 0xFF;
-		uint8_t instanceInclusionMask_RTReflection = 0xFF;
-		uint8_t instanceInclusionMask_SurfelGI = 0xFF;
-		uint8_t instanceInclusionMask_Lightmap = 0xFF;
-		uint8_t instanceInclusionMask_DDGI = 0xFF;
-
 		bool visibility_shading_in_compute = false;
+
+		// Crop parameters in logical coordinates:
+		float crop_left = 0;
+		float crop_top = 0;
+		float crop_right = 0;
+		float crop_bottom = 0;
+		wi::graphics::Rect GetScissorNativeResolution() const
+		{
+			wi::graphics::Rect scissor;
+			scissor.left = int(LogicalToPhysical(crop_left));
+			scissor.top = int(LogicalToPhysical(crop_top));
+			scissor.right = int(GetPhysicalWidth() - LogicalToPhysical(crop_right));
+			scissor.bottom = int(GetPhysicalHeight() - LogicalToPhysical(crop_bottom));
+			return scissor;
+		}
+		wi::graphics::Rect GetScissorInternalResolution() const
+		{
+			wi::graphics::Rect scissor;
+			scissor.left = int(LogicalToPhysical(crop_left) * resolutionScale);
+			scissor.top = int(LogicalToPhysical(crop_top) * resolutionScale);
+			scissor.right = int(GetInternalResolution().x - LogicalToPhysical(crop_right) * resolutionScale);
+			scissor.bottom = int(GetInternalResolution().y - LogicalToPhysical(crop_bottom) * resolutionScale);
+			return scissor;
+		}
 
 		const wi::graphics::Texture* GetDepthStencil() const override { return &depthBuffer_Main; }
 		const wi::graphics::Texture* GetGUIBlurredBackground() const override { return &rtGUIBlurredBackground[2]; }
@@ -201,10 +225,12 @@ namespace wi
 		constexpr float getEyeAdaptionKey() const { return eyeadaptionKey; }
 		constexpr float getEyeAdaptionRate() const { return eyeadaptionRate; }
 		constexpr float getFSRSharpness() const { return fsrSharpness; }
+		constexpr float getFSR2Sharpness() const { return fsr2Sharpness; }
 		constexpr float getLightShaftsStrength() const { return lightShaftsStrength; }
 		constexpr float getRaytracedDiffuseRange() const { return raytracedDiffuseRange; }
 		constexpr float getRaytracedReflectionsRange() const { return raytracedReflectionsRange; }
 		constexpr float getReflectionRoughnessCutoff() const { return reflectionRoughnessCutoff; }
+		constexpr wi::renderer::Tonemap getTonemap() const { return tonemap; }
 
 		constexpr bool getAOEnabled() const { return ao != AO_DISABLED; }
 		constexpr AO getAO() const { return ao; }
@@ -229,6 +255,8 @@ namespace wi
 		constexpr bool getOcclusionCullingEnabled() const { return occlusionCullingEnabled; }
 		constexpr bool getSceneUpdateEnabled() const { return sceneUpdateEnabled; }
 		constexpr bool getFSREnabled() const { return fsrEnabled; }
+		constexpr bool getFSR2Enabled() const { return fsr2Enabled; }
+		constexpr bool getVXGIResolveFullResolutionEnabled() const { return vxgiResolveFullResolution; }
 
 		constexpr uint32_t getMSAASampleCount() const { return msaaSampleCount; }
 
@@ -252,10 +280,12 @@ namespace wi
 		constexpr void setEyeAdaptionKey(float value) { eyeadaptionKey = value; }
 		constexpr void setEyeAdaptionRate(float value) { eyeadaptionRate = value; }
 		constexpr void setFSRSharpness(float value) { fsrSharpness = value; }
+		constexpr void setFSR2Sharpness(float value) { fsr2Sharpness = value; }
 		constexpr void setLightShaftsStrength(float value) { lightShaftsStrength = value; }
 		constexpr void setRaytracedDiffuseRange(float value) { raytracedDiffuseRange = value; }
 		constexpr void setRaytracedReflectionsRange(float value) { raytracedReflectionsRange = value; }
 		constexpr void setReflectionRoughnessCutoff(float value) { reflectionRoughnessCutoff = value; }
+		constexpr void setTonemap(wi::renderer::Tonemap value) { tonemap = value; }
 
 		void setAO(AO value);
 		void setSSREnabled(bool value);
@@ -279,8 +309,25 @@ namespace wi
 		constexpr void setOcclusionCullingEnabled(bool value) { occlusionCullingEnabled = value; }
 		constexpr void setSceneUpdateEnabled(bool value) { sceneUpdateEnabled = value; }
 		void setFSREnabled(bool value);
+		void setFSR2Enabled(bool value);
+		void setFSR2Preset(FSR2_Preset preset); // this will modify resolution scaling and sampler lod bias
+		void setVXGIResolveFullResolutionEnabled(bool value) { vxgiResolveFullResolution = value; }
 
 		virtual void setMSAASampleCount(uint32_t value) { msaaSampleCount = value; }
+
+		struct CustomPostprocess
+		{
+			std::string name = "CustomPostprocess";
+			wi::graphics::Shader computeshader;
+			XMFLOAT4 params0;
+			XMFLOAT4 params1;
+			enum class Stage
+			{
+				BeforeTonemap, // Before tonemap and bloom in HDR color space
+				AfterTonemap // After tonemap, in display color space
+			} stage = Stage::AfterTonemap;
+		};
+		wi::vector<CustomPostprocess> custom_post_processes;
 
 		void PreUpdate() override;
 		void Update(float dt) override;

@@ -7,6 +7,7 @@
 #include "wiMath.h"
 #include "wiECS.h"
 #include "wiScene_Decl.h"
+#include "wiScene_Components.h"
 
 namespace wi
 {
@@ -31,21 +32,23 @@ namespace wi
 		};
 
 		ParticleCounters statistics = {};
-		wi::graphics::GPUBuffer statisticsReadbackBuffer[wi::graphics::GraphicsDevice::GetBufferCount() + 1];
+		wi::graphics::GPUBuffer statisticsReadbackBuffer[wi::graphics::GraphicsDevice::GetBufferCount()];
 
 		wi::graphics::GPUBuffer particleBuffer;
 		wi::graphics::GPUBuffer aliveList[2];
 		wi::graphics::GPUBuffer deadList;
 		wi::graphics::GPUBuffer distanceBuffer; // for sorting
-		wi::graphics::GPUBuffer sphPartitionCellIndices; // for SPH
-		wi::graphics::GPUBuffer sphPartitionCellOffsets; // for SPH
+		wi::graphics::GPUBuffer sphGridCells;  // for SPH
+		wi::graphics::GPUBuffer sphParticleCells;  // for SPH
 		wi::graphics::GPUBuffer densityBuffer; // for SPH
 		wi::graphics::GPUBuffer counterBuffer;
 		wi::graphics::GPUBuffer indirectBuffers; // kickoffUpdate, simulation, draw
 		wi::graphics::GPUBuffer constantBuffer;
-		wi::graphics::GPUBuffer vertexBuffer_POS;
-		wi::graphics::GPUBuffer vertexBuffer_UVS;
-		wi::graphics::GPUBuffer vertexBuffer_COL;
+		wi::graphics::GPUBuffer generalBuffer;
+		wi::scene::MeshComponent::BufferView vb_pos;
+		wi::scene::MeshComponent::BufferView vb_nor;
+		wi::scene::MeshComponent::BufferView vb_uvs;
+		wi::scene::MeshComponent::BufferView vb_col;
 		wi::graphics::GPUBuffer primitiveBuffer; // raytracing
 		wi::graphics::GPUBuffer culledIndirectionBuffer; // rasterization
 		wi::graphics::GPUBuffer culledIndirectionBuffer2; // rasterization
@@ -57,6 +60,7 @@ namespace wi
 
 		float emit = 0.0f;
 		int burst = 0;
+		float dt = 0;
 
 		uint32_t MAX_PARTICLES = 1000;
 
@@ -66,7 +70,7 @@ namespace wi
 		void Restart();
 
 		// Must have a transform and material component, but mesh is optional
-		void UpdateGPU(uint32_t instanceIndex, const wi::scene::TransformComponent& transform, const wi::scene::MeshComponent* mesh, wi::graphics::CommandList cmd) const;
+		void UpdateGPU(uint32_t instanceIndex, const wi::scene::MeshComponent* mesh, wi::graphics::CommandList cmd) const;
 		void Draw(const wi::scene::MaterialComponent& material, wi::graphics::CommandList cmd) const;
 
 		void CreateRaytracingRenderData();
@@ -83,6 +87,9 @@ namespace wi
 			FLAG_SPH_FLUIDSIMULATION = 1 << 4,
 			FLAG_HAS_VOLUME = 1 << 5,
 			FLAG_FRAME_BLENDING = 1 << 6,
+			FLAG_COLLIDERS_DISABLED = 1 << 7,
+			FLAG_USE_RAIN_BLOCKER = 1 << 8,
+			FLAG_TAKE_COLOR_FROM_MESH = 1 << 9,
 		};
 		uint32_t _flags = FLAG_EMPTY;
 
@@ -128,8 +135,8 @@ namespace wi
 
 		// Non-serialized attributes:
 		XMFLOAT3 center;
-		uint32_t statisticsReadBackIndex = 0;
 		uint32_t layerMask = ~0u;
+		XMFLOAT4X4 worldMatrix = wi::math::IDENTITY_MATRIX;
 
 		inline bool IsDebug() const { return _flags & FLAG_DEBUG; }
 		inline bool IsPaused() const { return _flags & FLAG_PAUSED; }
@@ -138,6 +145,8 @@ namespace wi
 		inline bool IsSPHEnabled() const { return _flags & FLAG_SPH_FLUIDSIMULATION; }
 		inline bool IsVolumeEnabled() const { return _flags & FLAG_HAS_VOLUME; }
 		inline bool IsFrameBlendingEnabled() const { return _flags & FLAG_FRAME_BLENDING; }
+		inline bool IsCollidersDisabled() const { return _flags & FLAG_COLLIDERS_DISABLED; }
+		inline bool IsTakeColorFromMesh() const { return _flags & FLAG_TAKE_COLOR_FROM_MESH; }
 
 		inline void SetDebug(bool value) { if (value) { _flags |= FLAG_DEBUG; } else { _flags &= ~FLAG_DEBUG; } }
 		inline void SetPaused(bool value) { if (value) { _flags |= FLAG_PAUSED; } else { _flags &= ~FLAG_PAUSED; } }
@@ -146,6 +155,8 @@ namespace wi
 		inline void SetSPHEnabled(bool value) { if (value) { _flags |= FLAG_SPH_FLUIDSIMULATION; } else { _flags &= ~FLAG_SPH_FLUIDSIMULATION; } }
 		inline void SetVolumeEnabled(bool value) { if (value) { _flags |= FLAG_HAS_VOLUME; } else { _flags &= ~FLAG_HAS_VOLUME; } }
 		inline void SetFrameBlendingEnabled(bool value) { if (value) { _flags |= FLAG_FRAME_BLENDING; } else { _flags &= ~FLAG_FRAME_BLENDING; } }
+		inline void SetCollidersDisabled(bool value) { if (value) { _flags |= FLAG_COLLIDERS_DISABLED; } else { _flags &= ~FLAG_COLLIDERS_DISABLED; } }
+		inline void SetTakeColorFromMesh(bool value) { if (value) { _flags |= FLAG_TAKE_COLOR_FROM_MESH; } else { _flags &= ~FLAG_TAKE_COLOR_FROM_MESH; } }
 
 		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
 

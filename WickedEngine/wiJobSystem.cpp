@@ -14,7 +14,11 @@
 
 #ifdef PLATFORM_LINUX
 #include <pthread.h>
-#endif
+#endif // PLATFORM_LINUX
+
+#ifdef PLATFORM_PS5
+#include "wiJobSystem_PS5.h"
+#endif // PLATFORM_PS5
 
 namespace wi::jobsystem
 {
@@ -29,9 +33,8 @@ namespace wi::jobsystem
 	};
 	struct JobQueue
 	{
-		std::atomic_bool processing{ false };
 		std::deque<Job> queue;
-		wi::SpinLock locker;
+		std::mutex locker;
 
 		inline void push_back(const Job& item)
 		{
@@ -44,21 +47,13 @@ namespace wi::jobsystem
 			std::scoped_lock lock(locker);
 			if (queue.empty())
 			{
-				processing.store(false);
 				return false;
 			}
 			item = std::move(queue.front());
 			queue.pop_front();
-			processing.store(true);
 			return true;
 		}
 
-	};
-	struct WorkerState
-	{
-		std::atomic_bool alive{ true };
-		std::condition_variable wakeCondition;
-		std::mutex wakeMutex;
 	};
 
 	// This structure is responsible to stop worker thread loops.
@@ -68,20 +63,35 @@ namespace wi::jobsystem
 		uint32_t numCores = 0;
 		uint32_t numThreads = 0;
 		std::unique_ptr<JobQueue[]> jobQueuePerThread;
-		std::shared_ptr<WorkerState> worker_state = std::make_shared<WorkerState>(); // kept alive by both threads and internal_state
+		std::atomic_bool alive{ true };
+		std::condition_variable wakeCondition;
+		std::mutex wakeMutex;
 		std::atomic<uint32_t> nextQueue{ 0 };
+		wi::vector<std::thread> threads;
+		void ShutDown()
+		{
+			alive.store(false); // indicate that new jobs cannot be started from this point
+			bool wake_loop = true;
+			std::thread waker([&] {
+				while (wake_loop)
+				{
+					wakeCondition.notify_all(); // wakes up sleeping worker threads
+				}
+				});
+			for (auto& thread : threads)
+			{
+				thread.join();
+			}
+			wake_loop = false;
+			waker.join();
+			jobQueuePerThread.reset();
+			threads.clear();
+			numCores = 0;
+			numThreads = 0;
+		}
 		~InternalState()
 		{
-			worker_state->alive.store(false); // indicate that new jobs cannot be started from this point
-			worker_state->wakeCondition.notify_all(); // wakes up sleeping worker threads
-			// wait until all currently running jobs finish:
-			for (uint32_t i = 0; i < numThreads; ++i)
-			{
-				while (jobQueuePerThread[i].processing.load())
-				{
-					std::this_thread::yield();
-				}
-			}
+			ShutDown();
 		}
 	} static internal_state;
 
@@ -108,12 +118,12 @@ namespace wi::jobsystem
 					args.sharedmemory = nullptr;
 				}
 
-				for (uint32_t i = job.groupJobOffset; i < job.groupJobEnd; ++i)
+				for (uint32_t j = job.groupJobOffset; j < job.groupJobEnd; ++j)
 				{
-					args.jobIndex = i;
-					args.groupIndex = i - job.groupJobOffset;
-					args.isFirstJobInGroup = (i == job.groupJobOffset);
-					args.isLastJobInGroup = (i == job.groupJobEnd - 1);
+					args.jobIndex = j;
+					args.groupIndex = j - job.groupJobOffset;
+					args.isFirstJobInGroup = (j == job.groupJobOffset);
+					args.isLastJobInGroup = (j == job.groupJobEnd - 1);
 					job.task(args);
 				}
 
@@ -137,23 +147,23 @@ namespace wi::jobsystem
 		// Calculate the actual number of worker threads we want (-1 main thread):
 		internal_state.numThreads = std::min(maxThreadCount, std::max(1u, internal_state.numCores - 1));
 		internal_state.jobQueuePerThread.reset(new JobQueue[internal_state.numThreads]);
+		internal_state.threads.reserve(internal_state.numThreads);
 
 		for (uint32_t threadID = 0; threadID < internal_state.numThreads; ++threadID)
 		{
-			std::thread worker([threadID] {
+			internal_state.threads.emplace_back([threadID] {
 
-				std::shared_ptr<WorkerState> worker_state = internal_state.worker_state; // this is a copy of shared_ptr<WorkerState>, so it will remain alive for the thread's lifetime
-
-				while (worker_state->alive.load())
+				while (internal_state.alive.load())
 				{
 					work(threadID);
 
 					// finished with jobs, put to sleep
-					std::unique_lock<std::mutex> lock(worker_state->wakeMutex);
-					worker_state->wakeCondition.wait(lock);
+					std::unique_lock<std::mutex> lock(internal_state.wakeMutex);
+					internal_state.wakeCondition.wait(lock);
 				}
 
-				});
+			});
+			std::thread& worker = internal_state.threads.back();
 
 #ifdef _WIN32
 			// Do Windows-specific thread setup:
@@ -192,12 +202,17 @@ namespace wi::jobsystem
 			if (ret != 0)
 				handle_error_en(ret, std::string(" pthread_setname_np[" + std::to_string(threadID) + ']').c_str());
 #undef handle_error_en
+#elif defined(PLATFORM_PS5)
+			wi::jobsystem::ps5::SetupWorker(worker, threadID);
 #endif // _WIN32
-
-			worker.detach();
 		}
 
 		wi::backlog::post("wi::jobsystem Initialized with [" + std::to_string(internal_state.numCores) + " cores] [" + std::to_string(internal_state.numThreads) + " threads] (" + std::to_string((int)std::round(timer.elapsed())) + " ms)");
+	}
+
+	void ShutDown()
+	{
+		internal_state.ShutDown();
 	}
 
 	uint32_t GetThreadCount()
@@ -219,7 +234,7 @@ namespace wi::jobsystem
 		job.sharedmemory_size = 0;
 
 		internal_state.jobQueuePerThread[internal_state.nextQueue.fetch_add(1) % internal_state.numThreads].push_back(job);
-		internal_state.worker_state->wakeCondition.notify_one();
+		internal_state.wakeCondition.notify_one();
 	}
 
 	void Dispatch(context& ctx, uint32_t jobCount, uint32_t groupSize, const std::function<void(JobArgs)>& task, size_t sharedmemory_size)
@@ -249,7 +264,7 @@ namespace wi::jobsystem
 			internal_state.jobQueuePerThread[internal_state.nextQueue.fetch_add(1) % internal_state.numThreads].push_back(job);
 		}
 
-		internal_state.worker_state->wakeCondition.notify_all();
+		internal_state.wakeCondition.notify_all();
 	}
 
 	uint32_t DispatchGroupCount(uint32_t jobCount, uint32_t groupSize)
@@ -269,7 +284,7 @@ namespace wi::jobsystem
 		if (IsBusy(ctx))
 		{
 			// Wake any threads that might be sleeping:
-			internal_state.worker_state->wakeCondition.notify_all();
+			internal_state.wakeCondition.notify_all();
 
 			// work() will pick up any jobs that are on stand by and execute them on this thread:
 			work(internal_state.nextQueue.fetch_add(1) % internal_state.numThreads);

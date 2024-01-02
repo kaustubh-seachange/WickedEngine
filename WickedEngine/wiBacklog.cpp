@@ -23,6 +23,7 @@ using namespace wi::graphics;
 namespace wi::backlog
 {
 	bool enabled = false;
+	bool was_ever_enabled = enabled;
 	struct LogEntry
 	{
 		std::string text;
@@ -75,6 +76,7 @@ namespace wi::backlog
 	void Toggle()
 	{
 		enabled = !enabled;
+		was_ever_enabled = true;
 	}
 	void Scroll(float dir)
 	{
@@ -115,6 +117,7 @@ namespace wi::backlog
 				{
 					created = true;
 					inputField.Create("");
+					inputField.SetCancelInputEnabled(false);
 					inputField.OnInputAccepted([](wi::gui::EventArgs args) {
 						historyPos = 0;
 						post(args.sValue);
@@ -141,8 +144,6 @@ namespace wi::backlog
 					wi::Color theme_color_active = wi::Color::White();
 					wi::Color theme_color_deactivating = wi::Color::lerp(theme_color_focus, wi::Color::White(), 0.5f);
 					inputField.SetColor(theme_color_idle); // all states the same, it's gonna be always active anyway
-					inputField.SetShadowRadius(5);
-					inputField.SetShadowColor(wi::Color(80, 140, 180, 100));
 					inputField.font.params.color = wi::Color(160, 240, 250, 255);
 					inputField.font.params.shadowColor = wi::Color::Transparent();
 
@@ -189,8 +190,8 @@ namespace wi::backlog
 		}
 		pos = wi::math::Clamp(pos, -canvas.GetLogicalHeight(), 0);
 
-		inputField.SetSize(XMFLOAT2(canvas.GetLogicalWidth() - 20, 20));
-		inputField.SetPos(XMFLOAT2(10, canvas.GetLogicalHeight() - 30 + pos));
+		inputField.SetSize(XMFLOAT2(canvas.GetLogicalWidth() - 40, 20));
+		inputField.SetPos(XMFLOAT2(20, canvas.GetLogicalHeight() - 40 + pos));
 		inputField.Update(canvas, dt);
 
 		toggleButton.SetSize(XMFLOAT2(100, 100));
@@ -203,52 +204,78 @@ namespace wi::backlog
 		ColorSpace colorspace
 	)
 	{
-		if (pos > -canvas.GetLogicalHeight())
+		if (!was_ever_enabled)
+			return;
+		if (pos <= -canvas.GetLogicalHeight())
+			return;
+
+		GraphicsDevice* device = GetDevice();
+		device->EventBegin("Backlog", cmd);
+
+		if (!backgroundTex.IsValid())
 		{
-			if (!backgroundTex.IsValid())
-			{
-				const uint8_t colorData[] = { 0, 0, 43, 200, 43, 31, 141, 223 };
-				wi::texturehelper::CreateTexture(backgroundTex, colorData, 1, 2);
-			}
-
-			wi::image::Params fx = wi::image::Params((float)canvas.GetLogicalWidth(), (float)canvas.GetLogicalHeight());
-			fx.pos = XMFLOAT3(0, pos, 0);
-			fx.opacity = wi::math::Lerp(1, 0, -pos / canvas.GetLogicalHeight());
-			if (colorspace != ColorSpace::SRGB)
-			{
-				fx.enableLinearOutputMapping(9);
-			}
-			wi::image::Draw(&backgroundTex, fx, cmd);
-
-			if (colorspace != ColorSpace::SRGB)
-			{
-				inputField.sprites[inputField.GetState()].params.enableLinearOutputMapping(9);
-				inputField.font.params.enableLinearOutputMapping(9);
-				toggleButton.sprites[inputField.GetState()].params.enableLinearOutputMapping(9);
-				toggleButton.font.params.enableLinearOutputMapping(9);
-			}
-			inputField.Render(canvas, cmd);
-
-			Rect rect;
-			rect.left = 0;
-			rect.right = (int32_t)canvas.GetPhysicalWidth();
-			rect.top = 0;
-			rect.bottom = (int32_t)canvas.GetPhysicalHeight();
-			wi::graphics::GetDevice()->BindScissorRects(1, &rect, cmd);
-
-			toggleButton.Render(canvas, cmd);
-
-			rect.bottom = int32_t(canvas.LogicalToPhysical(inputField.GetPos().y - 15));
-			wi::graphics::GetDevice()->BindScissorRects(1, &rect, cmd);
-
-			DrawOutputText(canvas, cmd, colorspace);
-
-			rect.left = 0;
-			rect.right = std::numeric_limits<int>::max();
-			rect.top = 0;
-			rect.bottom = std::numeric_limits<int>::max();
-			wi::graphics::GetDevice()->BindScissorRects(1, &rect, cmd);
+			const uint8_t colorData[] = { 0, 0, 43, 200, 43, 31, 141, 223 };
+			wi::texturehelper::CreateTexture(backgroundTex, colorData, 1, 2);
+			device->SetName(&backgroundTex, "wi::backlog::backgroundTex");
 		}
+
+		wi::image::Params fx = wi::image::Params((float)canvas.GetLogicalWidth(), (float)canvas.GetLogicalHeight());
+		fx.pos = XMFLOAT3(0, pos, 0);
+		fx.opacity = wi::math::Lerp(1, 0, -pos / canvas.GetLogicalHeight());
+		if (colorspace != ColorSpace::SRGB)
+		{
+			fx.enableLinearOutputMapping(9);
+		}
+		wi::image::Draw(&backgroundTex, fx, cmd);
+
+		wi::image::Params inputbg;
+		inputbg.color = wi::Color(80, 140, 180, 200);
+		inputbg.pos = inputField.translation;
+		inputbg.pos.x -= 8;
+		inputbg.pos.y -= 8;
+		inputbg.siz = inputField.GetSize();
+		inputbg.siz.x += 16;
+		inputbg.siz.y += 16;
+		inputbg.enableCornerRounding();
+		inputbg.corners_rounding[0].radius = 10;
+		inputbg.corners_rounding[1].radius = 10;
+		inputbg.corners_rounding[2].radius = 10;
+		inputbg.corners_rounding[3].radius = 10;
+		if (colorspace != ColorSpace::SRGB)
+		{
+			inputbg.enableLinearOutputMapping(9);
+		}
+		wi::image::Draw(wi::texturehelper::getWhite(), inputbg, cmd);
+
+		if (colorspace != ColorSpace::SRGB)
+		{
+			inputField.sprites[inputField.GetState()].params.enableLinearOutputMapping(9);
+			inputField.font.params.enableLinearOutputMapping(9);
+			toggleButton.sprites[inputField.GetState()].params.enableLinearOutputMapping(9);
+			toggleButton.font.params.enableLinearOutputMapping(9);
+		}
+		inputField.Render(canvas, cmd);
+
+		Rect rect;
+		rect.left = 0;
+		rect.right = (int32_t)canvas.GetPhysicalWidth();
+		rect.top = 0;
+		rect.bottom = (int32_t)canvas.GetPhysicalHeight();
+		device->BindScissorRects(1, &rect, cmd);
+
+		toggleButton.Render(canvas, cmd);
+
+		rect.bottom = int32_t(canvas.LogicalToPhysical(inputField.GetPos().y - 15));
+		device->BindScissorRects(1, &rect, cmd);
+
+		DrawOutputText(canvas, cmd, colorspace);
+
+		rect.left = 0;
+		rect.right = std::numeric_limits<int>::max();
+		rect.top = 0;
+		rect.bottom = std::numeric_limits<int>::max();
+		device->BindScissorRects(1, &rect, cmd);
+		device->EventEnd(cmd);
 	}
 
 	void DrawOutputText(
@@ -259,39 +286,40 @@ namespace wi::backlog
 	{
 		std::scoped_lock lock(logLock);
 		wi::font::SetCanvas(canvas); // always set here as it can be called from outside...
-		font_params.cursor = {};
+		wi::font::Params params = font_params;
+		params.cursor = {};
 		if (refitscroll)
 		{
-			float textheight = wi::font::TextHeight(getTextWithoutLock(), font_params);
-			float limit = canvas.GetLogicalHeight() - 35;
+			float textheight = wi::font::TextHeight(getTextWithoutLock(), params);
+			float limit = canvas.GetLogicalHeight() - 50;
 			if (scroll + textheight > limit)
 			{
 				scroll = limit - textheight;
 			}
 			refitscroll = false;
 		}
-		font_params.posX = 5;
-		font_params.posY = pos + scroll;
-		font_params.h_wrap = canvas.GetLogicalWidth() - font_params.posX;
+		params.posX = 5;
+		params.posY = pos + scroll;
+		params.h_wrap = canvas.GetLogicalWidth() - params.posX;
 		if (colorspace != ColorSpace::SRGB)
 		{
-			font_params.enableLinearOutputMapping(9);
+			params.enableLinearOutputMapping(9);
 		}
 		for (auto& x : entries)
 		{
 			switch (x.level)
 			{
 			case LogLevel::Warning:
-				font_params.color = wi::Color::Warning();
+				params.color = wi::Color::Warning();
 				break;
 			case LogLevel::Error:
-				font_params.color = wi::Color::Error();
+				params.color = wi::Color::Error();
 				break;
 			default:
-				font_params.color = wi::Color::White();
+				params.color = font_params.color;
 				break;
 			}
-			font_params.cursor = wi::font::Draw(x.text, font_params, cmd);
+			params.cursor = wi::font::Draw(x.text, params, cmd);
 		}
 	}
 
@@ -343,21 +371,17 @@ namespace wi::backlog
 			}
 			refitscroll = true;
 
-#ifdef _WIN32
-			OutputDebugStringA(str.c_str());
-#endif // _WIN32
-
 			switch (level)
 			{
 			default:
 			case LogLevel::Default:
-				std::cout << str;
+				wi::helper::DebugOut(str, wi::helper::DebugLevel::Normal);
 				break;
 			case LogLevel::Warning:
-				std::clog << str;
+				wi::helper::DebugOut(str, wi::helper::DebugLevel::Warning);
 				break;
 			case LogLevel::Error:
-				std::cerr << str;
+				wi::helper::DebugOut(str, wi::helper::DebugLevel::Error);
 				break;
 			}
 
@@ -408,6 +432,10 @@ namespace wi::backlog
 	void setFontRowspacing(float value)
 	{
 		font_params.spacingY = value;
+	}
+	void setFontColor(wi::Color color)
+	{
+		font_params.color = color;
 	}
 
 	bool isActive() { return enabled; }

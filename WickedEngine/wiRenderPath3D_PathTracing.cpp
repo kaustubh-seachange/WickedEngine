@@ -8,6 +8,14 @@
 #include "wiScene.h"
 #include "wiBacklog.h"
 
+#if __has_include("OpenImageDenoise/oidn.hpp")
+#include "OpenImageDenoise/oidn.hpp"
+#if OIDN_VERSION_MAJOR >= 2
+#define OPEN_IMAGE_DENOISE
+#pragma comment(lib,"OpenImageDenoise.lib")
+// Also provide the required DLL files from OpenImageDenoise release near the exe!
+#endif // OIDN_VERSION_MAJOR >= 2
+#endif // __has_include("OpenImageDenoise/oidn.hpp")
 
 using namespace wi::graphics;
 using namespace wi::scene;
@@ -15,13 +23,7 @@ using namespace wi::scene;
 
 namespace wi
 {
-
-#if __has_include("OpenImageDenoise/oidn.hpp")
-#define OPEN_IMAGE_DENOISE
-#include "OpenImageDenoise/oidn.hpp"
-#pragma comment(lib,"OpenImageDenoise.lib")
-#pragma comment(lib,"tbb.lib")
-	// Also provide OpenImageDenoise.dll and tbb.dll near the exe!
+#ifdef OPEN_IMAGE_DENOISE
 	bool DenoiserCallback(void* userPtr, double n)
 	{
 		auto renderpath = (RenderPath3D_PathTracing*)userPtr;
@@ -36,11 +38,10 @@ namespace wi
 	bool RenderPath3D_PathTracing::isDenoiserAvailable() const { return true; }
 #else
 	bool RenderPath3D_PathTracing::isDenoiserAvailable() const { return false; }
-#endif
+#endif // OPEN_IMAGE_DENOISE
 
 	void RenderPath3D_PathTracing::ResizeBuffers()
 	{
-		RenderPath2D::ResizeBuffers(); // we don't need to use any buffers from RenderPath3D, so skip those
 
 		GraphicsDevice* device = wi::graphics::GetDevice();
 
@@ -63,6 +64,23 @@ namespace wi
 			device->CreateTexture(&desc, nullptr, &denoiserNormal);
 			device->SetName(&denoiserNormal, "denoiserNormal");
 #endif // OPEN_IMAGE_DENOISE
+
+			{
+				desc.bind_flags = BindFlag::UNORDERED_ACCESS | BindFlag::SHADER_RESOURCE;
+				desc.layout = ResourceState::UNORDERED_ACCESS;
+				desc.format = Format::R32_FLOAT;
+				device->CreateTexture(&desc, nullptr, &traceDepth);
+				device->SetName(&traceDepth, "traceDepth");
+				desc.format = Format::R8_UINT;
+				device->CreateTexture(&desc, nullptr, &traceStencil);
+				device->SetName(&traceStencil, "traceStencil");
+
+				desc.layout = ResourceState::DEPTHSTENCIL;
+				desc.bind_flags = BindFlag::DEPTH_STENCIL;
+				desc.format = wi::renderer::format_depthbuffer_main;
+				device->CreateTexture(&desc, nullptr, &depthBuffer_Main);
+				device->SetName(&depthBuffer_Main, "depthBuffer_Main");
+			}
 		}
 		{
 			TextureDesc desc;
@@ -88,18 +106,13 @@ namespace wi
 			device->SetName(&rtGUIBlurredBackground[2], "rtGUIBlurredBackground[2]");
 		}
 
-		{
-			RenderPassDesc desc;
-			desc.attachments.push_back(RenderPassAttachment::RenderTarget(traceResult, RenderPassAttachment::LoadOp::CLEAR));
-
-			device->CreateRenderPass(&desc, &renderpass_debugbvh);
-		}
-
 		wi::renderer::CreateLuminanceResources(luminanceResources, internalResolution);
 		wi::renderer::CreateBloomResources(bloomResources, internalResolution);
 
 		// also reset accumulation buffer state:
 		sam = -1;
+
+		RenderPath2D::ResizeBuffers(); // we don't need to use any buffers from RenderPath3D, so skip those
 	}
 
 	void RenderPath3D_PathTracing::Update(float dt)
@@ -191,18 +204,29 @@ namespace wi
 								init = true;
 							}
 
+							oidn::BufferRef texturedata_src_buffer = device.newBuffer(texturedata_src.size());
+							oidn::BufferRef texturedata_dst_buffer = device.newBuffer(texturedata_dst.size());
+							oidn::BufferRef texturedata_albedo_buffer;
+							oidn::BufferRef texturedata_normal_buffer;
+
+							texturedata_src_buffer.write(0, texturedata_src.size(), texturedata_src.data());
+
 							// Create a denoising filter
 							oidn::FilterRef filter = device.newFilter("RT"); // generic ray tracing filter
-							filter.setImage("color", texturedata_src.data(), oidn::Format::Float3, width, height, 0, sizeof(XMFLOAT4));
+							filter.setImage("color", texturedata_src_buffer, oidn::Format::Float3, width, height, 0, sizeof(XMFLOAT4));
 							if (!texturedata_albedo.empty())
 							{
-								filter.setImage("albedo", texturedata_albedo.data(), oidn::Format::Float3, width, height, 0, sizeof(XMFLOAT4)); // optional
+								texturedata_albedo_buffer = device.newBuffer(texturedata_albedo.size());
+								texturedata_albedo_buffer.write(0, texturedata_albedo.size(), texturedata_albedo.data());
+								filter.setImage("albedo", texturedata_albedo_buffer, oidn::Format::Float3, width, height, 0, sizeof(XMFLOAT4)); // optional
 							}
 							if (!texturedata_normal.empty())
 							{
-								filter.setImage("normal", texturedata_normal.data(), oidn::Format::Float3, width, height, 0, sizeof(XMFLOAT4)); // optional
+								texturedata_normal_buffer = device.newBuffer(texturedata_normal.size());
+								texturedata_normal_buffer.write(0, texturedata_normal.size(), texturedata_normal.data());
+								filter.setImage("normal", texturedata_normal_buffer, oidn::Format::Float3, width, height, 0, sizeof(XMFLOAT4)); // optional
 							}
-							filter.setImage("output", texturedata_dst.data(), oidn::Format::Float3, width, height, 0, sizeof(XMFLOAT4));
+							filter.setImage("output", texturedata_dst_buffer, oidn::Format::Float3, width, height, 0, sizeof(XMFLOAT4));
 							filter.set("hdr", true); // image is HDR
 							//filter.set("cleanAux", true);
 							filter.commit();
@@ -219,6 +243,10 @@ namespace wi
 							if (error != oidn::Error::None && error != oidn::Error::Cancelled)
 							{
 								wi::backlog::post(std::string("[OpenImageDenoise error] ") + errorMessage);
+							}
+							else
+							{
+								texturedata_dst_buffer.read(0, texturedata_dst.size(), texturedata_dst.data());
 							}
 						}
 
@@ -304,9 +332,18 @@ namespace wi
 				wi::renderer::BindCommonResources(cmd);
 				wi::renderer::UpdateRenderDataAsync(visibility_main, frameCB, cmd);
 
+				if (scene->weather.IsRealisticSky())
+				{
+					wi::renderer::ComputeSkyAtmosphereTextures(cmd);
+					wi::renderer::ComputeSkyAtmosphereSkyViewLut(cmd);
+				}
+
 				if (wi::renderer::GetRaytraceDebugBVHVisualizerEnabled())
 				{
-					device->RenderPassBegin(&renderpass_debugbvh, cmd);
+					RenderPassImage rp[] = {
+						RenderPassImage::RenderTarget(&traceResult, RenderPassImage::LoadOp::CLEAR)
+					};
+					device->RenderPassBegin(rp, arraysize(rp), cmd);
 
 					Viewport vp;
 					vp.width = (float)traceResult.GetDesc().width;
@@ -326,14 +363,33 @@ namespace wi
 						traceResult,
 						sam,
 						cmd,
-						instanceInclusionMask_PathTrace,
 						denoiserAlbedo.IsValid() ? &denoiserAlbedo : nullptr,
-						denoiserNormal.IsValid() ? &denoiserNormal : nullptr
+						denoiserNormal.IsValid() ? &denoiserNormal : nullptr,
+						traceDepth.IsValid() ? &traceDepth : nullptr,
+						traceStencil.IsValid() ? &traceStencil : nullptr,
+						depthBuffer_Main.IsValid() ? &depthBuffer_Main : nullptr
 					);
-
 
 					wi::profiler::EndRange(range); // Traced Scene
 				}
+
+				if (depthBuffer_Main.IsValid())
+				{
+					RenderPassImage rp[] = {
+						RenderPassImage::DepthStencil(&depthBuffer_Main, RenderPassImage::LoadOp::LOAD),
+						RenderPassImage::RenderTarget(&traceResult, RenderPassImage::LoadOp::LOAD)
+					};
+					device->RenderPassBegin(rp, arraysize(rp), cmd);
+				}
+				else
+				{
+					RenderPassImage rp[] = {
+						RenderPassImage::RenderTarget(&traceResult, RenderPassImage::LoadOp::LOAD)
+					};
+					device->RenderPassBegin(rp, arraysize(rp), cmd);
+				}
+				wi::renderer::DrawSpritesAndFonts(*scene, *camera, false, cmd);
+				device->RenderPassEnd(cmd);
 
 				});
 
@@ -410,7 +466,8 @@ namespace wi
 				nullptr,
 				getEyeAdaptionEnabled() ? &luminanceResources.luminance : nullptr,
 				getBloomEnabled() ? &bloomResources.texture_bloom : nullptr,
-				colorspace
+				colorspace,
+				getTonemap()
 			);
 			lastPostprocessRT = &rtPostprocess;
 

@@ -12,11 +12,19 @@
 #include "wiVector.h"
 #include "wiSpinLock.h"
 
+#ifdef PLATFORM_XBOX
+#include "wiGraphicsDevice_DX12_XBOX.h"
+#else
+#include "Utility/dx12/d3d12.h"
+#include "Utility/dx12/d3d12video.h"
 #include <dxgi1_6.h>
+#define PPV_ARGS(x) IID_PPV_ARGS(&x)
+#endif // PLATFORM_XBOX
+
 #include <wrl/client.h> // ComPtr
 
-#include "Utility/dx12/d3d12.h"
 #define D3D12MA_D3D12_HEADERS_ALREADY_INCLUDED
+#define __ID3D12Device1_INTERFACE_DEFINED__
 #include "Utility/D3D12MemAlloc.h"
 
 #include <deque>
@@ -28,18 +36,16 @@ namespace wi::graphics
 	class GraphicsDevice_DX12 final : public GraphicsDevice
 	{
 	protected:
+#ifndef PLATFORM_XBOX
 		Microsoft::WRL::ComPtr<IDXGIFactory4> dxgiFactory;
-		Microsoft::WRL::ComPtr<IDXGIAdapter1> dxgiAdapter;
+#endif // PLATFORM_XBOX
 		Microsoft::WRL::ComPtr<ID3D12Device5> device;
+		Microsoft::WRL::ComPtr<ID3D12VideoDevice> video_device;
 
-#if defined(WICKED_DX12_USE_PIPELINE_LIBRARY)
-		Microsoft::WRL::ComPtr<ID3D12PipelineLibrary1> pipelineLibrary;
-#endif
-
-#ifndef PLATFORM_UWP
+#ifdef PLATFORM_WINDOWS_DESKTOP
 		Microsoft::WRL::ComPtr<ID3D12Fence> deviceRemovedFence;
-		HANDLE deviceRemovedWaitHandle;
-#endif
+		HANDLE deviceRemovedWaitHandle = {};
+#endif // PLATFORM_WINDOWS_DESKTOP
 		std::mutex onDeviceRemovedMutex;
 		bool deviceRemoved = false;
 
@@ -50,6 +56,7 @@ namespace wi::graphics
 
 		bool tearingSupported = false;
 		bool additionalShadingRatesSupported = false;
+		bool casting_fully_typed_formats = false;
 
 		uint32_t rtv_descriptor_size = 0;
 		uint32_t dsv_descriptor_size = 0;
@@ -72,10 +79,14 @@ namespace wi::graphics
 			wi::vector<ID3D12CommandList*> submit_cmds;
 		} queues[QUEUE_COUNT];
 
+#ifdef PLATFORM_XBOX
+		std::mutex queue_locker;
+#endif // PLATFORM_XBOX
+
 		struct CopyAllocator
 		{
 			GraphicsDevice_DX12* device = nullptr;
-			Microsoft::WRL::ComPtr<ID3D12CommandQueue> queue;
+			Microsoft::WRL::ComPtr<ID3D12CommandQueue> queue; // create separate copy queue to reduce interference with main QUEUE_COPY
 			std::mutex locker;
 
 			struct CopyCMD
@@ -83,12 +94,14 @@ namespace wi::graphics
 				Microsoft::WRL::ComPtr<ID3D12CommandAllocator> commandAllocator;
 				Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> commandList;
 				Microsoft::WRL::ComPtr<ID3D12Fence> fence;
+				uint64_t fenceValueSignaled = 0;
 				GPUBuffer uploadbuffer;
+				inline bool IsValid() const { return commandList != nullptr; }
+				inline bool IsCompleted() const { return fence->GetCompletedValue() >= fenceValueSignaled; }
 			};
 			wi::vector<CopyCMD> freelist;
 
 			void init(GraphicsDevice_DX12* device);
-			void destroy();
 			CopyCMD allocate(uint64_t staging_size);
 			void submit(CopyCMD cmd);
 		};
@@ -114,7 +127,8 @@ namespace wi::graphics
 		struct CommandList_DX12
 		{
 			Microsoft::WRL::ComPtr<ID3D12CommandAllocator> commandAllocators[BUFFERCOUNT][QUEUE_COUNT];
-			Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList6> commandLists[QUEUE_COUNT];
+			Microsoft::WRL::ComPtr<ID3D12CommandList> commandLists[QUEUE_COUNT];
+			using graphics_command_list_version = ID3D12GraphicsCommandList6;
 			uint32_t buffer_index = 0;
 
 			QUEUE_TYPE queue = {};
@@ -140,12 +154,24 @@ namespace wi::graphics
 			const RaytracingPipelineState* active_rt = {};
 			const ID3D12RootSignature* active_rootsig_graphics = {};
 			const ID3D12RootSignature* active_rootsig_compute = {};
-			const RenderPass* active_renderpass = {};
 			ShadingRate prev_shadingrate = {};
 			wi::vector<const SwapChain*> swapchains;
-			Microsoft::WRL::ComPtr<ID3D12Resource> active_backbuffer;
 			bool dirty_pso = {};
 			wi::vector<D3D12_RAYTRACING_GEOMETRY_DESC> accelerationstructure_build_geometries;
+			RenderPassInfo renderpass_info;
+			wi::vector<D3D12_RESOURCE_BARRIER> renderpass_barriers_begin;
+			wi::vector<D3D12_RESOURCE_BARRIER> renderpass_barriers_begin_after_discards;
+			wi::vector<D3D12_RESOURCE_BARRIER> renderpass_barriers_end;
+			ID3D12Resource* shading_rate_image = nullptr;
+			ID3D12Resource* resolve_src[D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+			ID3D12Resource* resolve_dst[D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+			DXGI_FORMAT resolve_formats[D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+			ID3D12Resource* resolve_src_ds = nullptr;
+			ID3D12Resource* resolve_dst_ds = nullptr;
+			DXGI_FORMAT resolve_ds_format = {};
+			wi::vector<D3D12_RENDER_PASS_ENDING_ACCESS_RESOLVE_SUBRESOURCE_PARAMETERS> resolve_subresources[D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+			wi::vector<D3D12_RENDER_PASS_ENDING_ACCESS_RESOLVE_SUBRESOURCE_PARAMETERS> resolve_subresources_dsv = {};
+			wi::vector<D3D12_RESOURCE_BARRIER> resolve_src_barriers;
 
 			void reset(uint32_t bufferindex)
 			{
@@ -160,20 +186,47 @@ namespace wi::graphics
 				active_rt = nullptr;
 				active_rootsig_graphics = nullptr;
 				active_rootsig_compute = nullptr;
-				active_renderpass = nullptr;
 				prev_shadingrate = ShadingRate::RATE_INVALID;
 				dirty_pso = false;
 				swapchains.clear();
-				active_backbuffer = nullptr;
+				renderpass_info = {};
+				renderpass_barriers_begin.clear();
+				renderpass_barriers_end.clear();
+				for (size_t i = 0; i < D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i)
+				{
+					resolve_src[i] = {};
+					resolve_dst[i] = {};
+					resolve_subresources[i].clear();
+				}
+				resolve_subresources_dsv.clear();
+				resolve_src_barriers.clear();
+				resolve_src_ds = nullptr;
+				resolve_dst_ds = nullptr;
+				shading_rate_image = nullptr;
 			}
 
 			inline ID3D12CommandAllocator* GetCommandAllocator()
 			{
 				return commandAllocators[buffer_index][queue].Get();
 			}
-			inline ID3D12GraphicsCommandList6* GetGraphicsCommandList()
+			inline ID3D12CommandList* GetCommandList()
 			{
-				return (ID3D12GraphicsCommandList6*)commandLists[queue].Get();
+				return commandLists[queue].Get();
+			}
+			inline ID3D12GraphicsCommandList* GetGraphicsCommandList()
+			{
+				assert(queue != QUEUE_VIDEO_DECODE);
+				return (ID3D12GraphicsCommandList*)commandLists[queue].Get();
+			}
+			inline graphics_command_list_version* GetGraphicsCommandListLatest()
+			{
+				assert(queue != QUEUE_VIDEO_DECODE && queue != QUEUE_COPY);
+				return (graphics_command_list_version*)commandLists[queue].Get();
+			}
+			inline ID3D12VideoDecodeCommandList* GetVideoDecodeCommandList()
+			{
+				assert(queue == QUEUE_VIDEO_DECODE);
+				return (ID3D12VideoDecodeCommandList*)commandLists[queue].Get();
 			}
 		};
 		wi::vector<std::unique_ptr<CommandList_DX12>> commandlists;
@@ -186,10 +239,6 @@ namespace wi::graphics
 			return *(CommandList_DX12*)cmd.internal_state;
 		}
 
-
-		mutable wi::unordered_map<size_t, Microsoft::WRL::ComPtr<ID3D12RootSignature>> rootsignature_cache;
-		mutable std::mutex rootsignature_cache_mutex;
-
 		wi::unordered_map<size_t, Microsoft::WRL::ComPtr<ID3D12PipelineState>> pipelines_global;
 
 		void pso_validate(CommandList cmd);
@@ -198,22 +247,22 @@ namespace wi::graphics
 		void predispatch(CommandList cmd);
 
 	public:
-		GraphicsDevice_DX12(ValidationMode validationMode = ValidationMode::Disabled);
+		GraphicsDevice_DX12(ValidationMode validationMode = ValidationMode::Disabled, GPUPreference preference = GPUPreference::Discrete);
 		~GraphicsDevice_DX12() override;
 
 		bool CreateSwapChain(const SwapChainDesc* desc, wi::platform::window_type window, SwapChain* swapchain) const override;
-		bool CreateBuffer(const GPUBufferDesc * desc, const void* initial_data, GPUBuffer* buffer) const override;
+		bool CreateBuffer2(const GPUBufferDesc * desc, const std::function<void(void*)>& init_callback, GPUBuffer* buffer) const override;
 		bool CreateTexture(const TextureDesc* desc, const SubresourceData* initial_data, Texture* texture) const override;
 		bool CreateShader(ShaderStage stage, const void* shadercode, size_t shadercode_size, Shader* shader) const override;
 		bool CreateSampler(const SamplerDesc* desc, Sampler* sampler) const override;
 		bool CreateQueryHeap(const GPUQueryHeapDesc* desc, GPUQueryHeap* queryheap) const override;
-		bool CreatePipelineState(const PipelineStateDesc* desc, PipelineState* pso) const override;
-		bool CreateRenderPass(const RenderPassDesc* desc, RenderPass* renderpass) const override;
+		bool CreatePipelineState(const PipelineStateDesc* desc, PipelineState* pso, const RenderPassInfo* renderpass_info = nullptr) const override;
 		bool CreateRaytracingAccelerationStructure(const RaytracingAccelerationStructureDesc* desc, RaytracingAccelerationStructure* bvh) const override;
 		bool CreateRaytracingPipelineState(const RaytracingPipelineStateDesc* desc, RaytracingPipelineState* rtpso) const override;
-		
-		int CreateSubresource(Texture* texture, SubresourceType type, uint32_t firstSlice, uint32_t sliceCount, uint32_t firstMip, uint32_t mipCount, const Format* format_change = nullptr) const override;
-		int CreateSubresource(GPUBuffer* buffer, SubresourceType type, uint64_t offset, uint64_t size = ~0, const Format* format_change = nullptr) const override;
+		bool CreateVideoDecoder(const VideoDesc* desc, VideoDecoder* video_decoder) const override;
+
+		int CreateSubresource(Texture* texture, SubresourceType type, uint32_t firstSlice, uint32_t sliceCount, uint32_t firstMip, uint32_t mipCount, const Format* format_change = nullptr, const ImageAspect* aspect = nullptr, const Swizzle* swizzle = nullptr) const override;
+		int CreateSubresource(GPUBuffer* buffer, SubresourceType type, uint64_t offset, uint64_t size = ~0, const Format* format_change = nullptr, const uint32_t* structuredbuffer_stride_change = nullptr) const override;
 
 		int GetDescriptorIndex(const GPUResource* resource, SubresourceType type, int subresource = -1) const override;
 		int GetDescriptorIndex(const Sampler* sampler) const override;
@@ -222,7 +271,7 @@ namespace wi::graphics
 		void WriteTopLevelAccelerationStructureInstance(const RaytracingAccelerationStructureDesc::TopLevel::Instance* instance, void* dest) const override;
 		void WriteShaderIdentifier(const RaytracingPipelineState* rtpso, uint32_t group_index, void* dest) const override;
 
-		void SetName(GPUResource* pResource, const char* name) override;
+		void SetName(GPUResource* pResource, const char* name) const override;
 
 		CommandList BeginCommandList(QUEUE_TYPE queue = QUEUE_GRAPHICS) override;
 		void SubmitCommandLists() override;
@@ -232,7 +281,14 @@ namespace wi::graphics
 		void ClearPipelineStateCache() override;
 		size_t GetActivePipelineCount() const override { return pipelines_global.size(); }
 
-		ShaderFormat GetShaderFormat() const override { return ShaderFormat::HLSL6; }
+		ShaderFormat GetShaderFormat() const override
+		{
+#ifdef PLATFORM_XBOX
+			return ShaderFormat::HLSL6_XS;
+#else
+			return ShaderFormat::HLSL6;
+#endif // PLATFORM_XBOX
+		}
 
 		Texture GetBackBuffer(const SwapChain* swapchain) const override;
 
@@ -248,11 +304,15 @@ namespace wi::graphics
 			}
 			if (has_flag(desc->misc_flags, ResourceMiscFlag::BUFFER_RAW))
 			{
-				alignment = std::max(alignment, 16ull);
+				alignment = std::max(alignment, (uint64_t)D3D12_RAW_UAV_SRV_BYTE_ALIGNMENT);
 			}
 			if (has_flag(desc->misc_flags, ResourceMiscFlag::BUFFER_STRUCTURED))
 			{
 				alignment = std::max(alignment, (uint64_t)desc->stride);
+			}
+			if (desc->format != Format::UNKNOWN || has_flag(desc->misc_flags, ResourceMiscFlag::TYPED_FORMAT_CASTING))
+			{
+				alignment = std::max(alignment, 16ull);
 			}
 			return alignment;
 		}
@@ -275,7 +335,7 @@ namespace wi::graphics
 
 		void WaitCommandList(CommandList cmd, CommandList wait_for) override;
 		void RenderPassBegin(const SwapChain* swapchain, CommandList cmd) override;
-		void RenderPassBegin(const RenderPass* renderpass, CommandList cmd) override;
+		void RenderPassBegin(const RenderPassImage* images, uint32_t image_count, CommandList cmd, RenderPassFlags flags = RenderPassFlags::NONE) override;
 		void RenderPassEnd(CommandList cmd) override;
 		void BindScissorRects(uint32_t numRects, const Rect* rects, CommandList cmd) override;
 		void BindViewports(uint32_t NumViewports, const Viewport* pViewports, CommandList cmd) override;
@@ -305,8 +365,10 @@ namespace wi::graphics
 		void DispatchIndirect(const GPUBuffer* args, uint64_t args_offset, CommandList cmd) override;
 		void DispatchMesh(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ, CommandList cmd) override;
 		void DispatchMeshIndirect(const GPUBuffer* args, uint64_t args_offset, CommandList cmd) override;
+		void DispatchMeshIndirectCount(const GPUBuffer* args, uint64_t args_offset, const GPUBuffer* count, uint64_t count_offset, uint32_t max_count, CommandList cmd) override;
 		void CopyResource(const GPUResource* pDst, const GPUResource* pSrc, CommandList cmd) override;
 		void CopyBuffer(const GPUBuffer* pDst, uint64_t dst_offset, const GPUBuffer* pSrc, uint64_t src_offset, uint64_t size, CommandList cmd) override;
+		void CopyTexture(const Texture* dst, uint32_t dstX, uint32_t dstY, uint32_t dstZ, uint32_t dstMip, uint32_t dstSlice, const Texture* src, uint32_t srcMip, uint32_t srcSlice, CommandList cmd, const Box* srcbox, ImageAspect dst_aspect, ImageAspect src_aspect) override;
 		void QueryBegin(const GPUQueryHeap* heap, uint32_t index, CommandList cmd) override;
 		void QueryEnd(const GPUQueryHeap* heap, uint32_t index, CommandList cmd) override;
 		void QueryResolve(const GPUQueryHeap* heap, uint32_t index, uint32_t count, const GPUBuffer* dest, uint64_t dest_offset, CommandList cmd) override;
@@ -319,10 +381,16 @@ namespace wi::graphics
 		void PredicationBegin(const GPUBuffer* buffer, uint64_t offset, PredicationOp op, CommandList cmd) override;
 		void PredicationEnd(CommandList cmd) override;
 		void ClearUAV(const GPUResource* resource, uint32_t value, CommandList cmd) override;
+		void VideoDecode(const VideoDecoder* video_decoder, const VideoDecodeOperation* op, CommandList cmd) override;
 
 		void EventBegin(const char* name, CommandList cmd) override;
 		void EventEnd(CommandList cmd) override;
 		void SetMarker(const char* name, CommandList cmd) override;
+
+		RenderPassInfo GetRenderPassInfo(CommandList cmd) override
+		{
+			return GetCommandList(cmd).renderpass_info;
+		}
 
 		GPULinearAllocator& GetFrameAllocator(CommandList cmd) override
 		{
@@ -358,10 +426,12 @@ namespace wi::graphics
 
 		struct AllocationHandler
 		{
-			D3D12MA::Allocator* allocator = nullptr;
+			Microsoft::WRL::ComPtr<D3D12MA::Allocator> allocator;
 			Microsoft::WRL::ComPtr<ID3D12Device> device;
 			uint64_t framecount = 0;
 			std::mutex destroylocker;
+
+			Microsoft::WRL::ComPtr<D3D12MA::Pool> uma_pool;
 
 			struct DescriptorAllocator
 			{
@@ -382,7 +452,7 @@ namespace wi::graphics
 				void block_allocate()
 				{
 					heaps.emplace_back();
-					HRESULT hr = device->device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&heaps.back()));
+					HRESULT hr = device->device->CreateDescriptorHeap(&desc, PPV_ARGS(heaps.back()));
 					assert(SUCCEEDED(hr));
 					D3D12_CPU_DESCRIPTOR_HANDLE heap_start = heaps.back()->GetCPUDescriptorHandleForHeapStart();
 					for (UINT i = 0; i < desc.NumDescriptors; ++i)
@@ -420,19 +490,20 @@ namespace wi::graphics
 			wi::vector<int> free_bindless_res;
 			wi::vector<int> free_bindless_sam;
 
-			std::deque<std::pair<D3D12MA::Allocation*, uint64_t>> destroyer_allocations;
+			std::deque<std::pair<Microsoft::WRL::ComPtr<D3D12MA::Allocation>, uint64_t>> destroyer_allocations;
 			std::deque<std::pair<Microsoft::WRL::ComPtr<ID3D12Resource>, uint64_t>> destroyer_resources;
 			std::deque<std::pair<Microsoft::WRL::ComPtr<ID3D12QueryHeap>, uint64_t>> destroyer_queryheaps;
 			std::deque<std::pair<Microsoft::WRL::ComPtr<ID3D12PipelineState>, uint64_t>> destroyer_pipelines;
 			std::deque<std::pair<Microsoft::WRL::ComPtr<ID3D12RootSignature>, uint64_t>> destroyer_rootSignatures;
 			std::deque<std::pair<Microsoft::WRL::ComPtr<ID3D12StateObject>, uint64_t>> destroyer_stateobjects;
+			std::deque<std::pair<Microsoft::WRL::ComPtr<ID3D12VideoDecoderHeap>, uint64_t>> destroyer_video_decoder_heaps;
+			std::deque<std::pair<Microsoft::WRL::ComPtr<ID3D12VideoDecoder>, uint64_t>> destroyer_video_decoders;
 			std::deque<std::pair<int, uint64_t>> destroyer_bindless_res;
 			std::deque<std::pair<int, uint64_t>> destroyer_bindless_sam;
 
 			~AllocationHandler()
 			{
 				Update(~0, 0); // destroy all remaining
-				if (allocator) allocator->Release();
 			}
 
 			// Deferred destroy of resources that the GPU is already finished with:
@@ -444,9 +515,8 @@ namespace wi::graphics
 				{
 					if (destroyer_allocations.front().second + BUFFERCOUNT < FRAMECOUNT)
 					{
-						auto item = destroyer_allocations.front();
 						destroyer_allocations.pop_front();
-						item.first->Release();
+						// comptr auto delete
 					}
 					else
 					{
@@ -506,6 +576,30 @@ namespace wi::graphics
 					if (destroyer_stateobjects.front().second + BUFFERCOUNT < FRAMECOUNT)
 					{
 						destroyer_stateobjects.pop_front();
+						// comptr auto delete
+					}
+					else
+					{
+						break;
+					}
+				}
+				while (!destroyer_video_decoder_heaps.empty())
+				{
+					if (destroyer_video_decoder_heaps.front().second + BUFFERCOUNT < FRAMECOUNT)
+					{
+						destroyer_video_decoder_heaps.pop_front();
+						// comptr auto delete
+					}
+					else
+					{
+						break;
+					}
+				}
+				while (!destroyer_video_decoders.empty())
+				{
+					if (destroyer_video_decoders.front().second + BUFFERCOUNT < FRAMECOUNT)
+					{
+						destroyer_video_decoders.pop_front();
 						// comptr auto delete
 					}
 					else

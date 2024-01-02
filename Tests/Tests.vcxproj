@@ -76,6 +76,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)BUILD\$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
     <PostBuildEvent>
       <Command>
@@ -124,8 +125,7 @@
   </ItemGroup>
   <ItemGroup>
     <Image Include="images\HelloWorld.png" />
-    <Image Include="small.ico" />
-    <Image Include="Tests.ico" />
+    <Image Include="wicked.ico" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\WickedEngine\WickedEngine_Windows.vcxproj">

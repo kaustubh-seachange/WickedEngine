@@ -48,7 +48,7 @@ namespace wi::font
 		wi::Color shadowColor; // transparent disables, any other color enables shadow under text
 		float h_wrap = -1; // wrap start width (-1 default for no wrap) (logical canvas units)
 		int style = 0; // 0: use default font style, other values can be taken from the wi::font::AddFontStyle() funtion's return value
-		float softness = 0.1f; // value in [0,1] range (requires SDF rendering to be enabled)
+		float softness = 0; // value in [0,1] range (requires SDF rendering to be enabled)
 		float bolden = 0; // value in [0,1] range (requires SDF rendering to be enabled)
 		float shadow_softness = 0.5f; // value in [0,1] range (requires SDF rendering to be enabled)
 		float shadow_bolden = 0.1f; // value in [0,1] range (requires SDF rendering to be enabled)
@@ -56,6 +56,8 @@ namespace wi::font
 		float shadow_offset_y = 0; // offset for shadow under the text in logical canvas coordinates
 		Cursor cursor; // cursor can be used to continue text drawing by taking the Draw's return value (optional)
 		float hdr_scaling = 1.0f; // a scaling value for use by linear output mapping
+		float intensity = 1.0f; // color multiplier
+		float shadow_intensity = 1.0f; // shadow color multiplier
 		const XMMATRIX* customProjection = nullptr;
 		const XMMATRIX* customRotation = nullptr;
 
@@ -96,8 +98,7 @@ namespace wi::font
 			wi::Color color = wi::Color(255, 255, 255, 255),
 			wi::Color shadowColor = wi::Color(0, 0, 0, 0)
 		) :
-			posX(posX),
-			posY(posY),
+			position(posX, posY, 0),
 			size(size),
 			h_align(h_align),
 			v_align(v_align),
@@ -141,15 +142,17 @@ namespace wi::font
 	//	fontName : name of the font (it doesn't need to be a path)
 	//	data : binary data of the .ttf font
 	//	size : size of the font binary data
+	//  copyData : whether data is copied away for storage. If false (default) developer must ensure that it is not deleted
 	//	Returns fontStyleID that is reusable. If font already exists, just return its ID
 	//	NOTE: When loading font with this method, the developer must ensure that font data is
-	//	not deleted while the font is in use
-	int AddFontStyle(const std::string& fontName, const uint8_t* data, size_t size);
+	//	not deleted while the font is in use (unless copyData is specified as true)
+	int AddFontStyle(const std::string& fontName, const uint8_t* data, size_t size, bool copyData = false);
 
 	// Set canvas for the CommandList to handle DPI-aware font rendering on the current thread
 	void SetCanvas(const wi::Canvas& current_canvas);
 	// Call once per frame to update font atlas texture
-	void UpdateAtlas();
+	//	upscaling : this should be the DPI upscaling factor, otherwise there will be no upscaling. Upscaling will cause glyphs to be cached at higher resolution.
+	void UpdateAtlas(float upscaling = 1.0f);
 
 	// Draw text with specified parameters and return cursor for last word
 	//	The next Draw() can continue from where this left off by using the return value of this function
@@ -168,6 +171,14 @@ namespace wi::font
 	XMFLOAT2 TextSize(const wchar_t* text, const Params& params);
 	XMFLOAT2 TextSize(const std::string& text, const Params& params);
 	XMFLOAT2 TextSize(const std::wstring& text, const Params& params);
+
+	// Computes the text's cursor coordinate for a given string
+	Cursor TextCursor(const char* text, size_t text_length, const Params& params);
+	Cursor TextCursor(const wchar_t* text, size_t text_length, const Params& params);
+	Cursor TextCursor(const char* text, const Params& params);
+	Cursor TextCursor(const wchar_t* text, const Params& params);
+	Cursor TextCursor(const std::string& text, const Params& params);
+	Cursor TextCursor(const std::wstring& text, const Params& params);
 
 	// Computes the text's width in logical canvas coordinates
 	//	Avoid calling TextWidth() and TextHeight() both, instead use TextSize() if you need both measurements!

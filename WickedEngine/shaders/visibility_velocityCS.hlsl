@@ -1,3 +1,4 @@
+#define SURFACE_LOAD_ENABLE_WIND
 #include "globals.hlsli"
 #include "ShaderInterop_Renderer.h"
 #include "surfaceHF.hlsli"
@@ -9,8 +10,15 @@ RWTexture2D<float2> output_velocity : register(u0);
 void main(uint2 DTid : SV_DispatchThreadID)
 {
 	uint2 pixel = DTid.xy;
-
 	const float2 uv = ((float2)pixel + 0.5) * GetCamera().internal_resolution_rcp;
+
+	[branch]
+	if (!GetCamera().is_uv_inside_scissor(uv))
+	{
+		output_velocity[pixel] = 0;
+		return;
+	}
+
 	const float2 clipspace = uv_to_clipspace(uv);
 	RayDesc ray = CreateCameraRay(clipspace);
 
@@ -39,8 +47,10 @@ void main(uint2 DTid : SV_DispatchThreadID)
 
 	float2 pos2D = clipspace;
 	float4 pos2DPrev = mul(GetCamera().previous_view_projection, float4(pre, 1));
-	pos2DPrev.xy /= pos2DPrev.w;
-	float2 velocity = ((pos2DPrev.xy - GetCamera().temporalaa_jitter_prev) - (pos2D.xy - GetCamera().temporalaa_jitter)) * float2(0.5, -0.5);
-	output_velocity[pixel] = velocity;
-
+	if(pos2DPrev.w > 0)
+	{
+		pos2DPrev.xy /= pos2DPrev.w;
+		float2 velocity = ((pos2DPrev.xy - GetCamera().temporalaa_jitter_prev) - (pos2D.xy - GetCamera().temporalaa_jitter)) * float2(0.5, -0.5);
+		output_velocity[pixel] = clamp(velocity, -1, 1);
+	}
 }

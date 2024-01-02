@@ -1,9 +1,20 @@
 #include "stdafx.h"
 #include "main_Windows.h"
-#include "Editor.h"
 
 #include <fstream>
 #include <thread>
+#include <shellapi.h> // drag n drop
+
+// Enable macro and follow instructions from here: https://devblogs.microsoft.com/directx/gettingstarted-dx12agility/
+//#define USING_D3D12_AGILITY_SDK
+#ifdef USING_D3D12_AGILITY_SDK
+extern "C"
+{
+	// Used to enable the "Agility SDK" components
+	__declspec(dllexport) extern const UINT D3D12SDKVersion = 608 /* D3D12_SDK_VERSION*/;
+	__declspec(dllexport) extern const char* D3D12SDKPath = u8".\\D3D12\\";
+}
+#endif
 
 #define MAX_LOADSTRING 100
 
@@ -13,13 +24,6 @@ WCHAR szTitle[MAX_LOADSTRING];                  // The title bar text
 WCHAR szWindowClass[MAX_LOADSTRING];            // the main window class name
 Editor editor;
 bool window_recreating = false;
-
-
-enum Hotkeys
-{
-	UNUSED = 0,
-	PRINTSCREEN = 1,
-};
 
 // Forward declarations of functions included in this code module:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
@@ -33,7 +37,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_ int       nCmdShow)
 {
     UNREFERENCED_PARAMETER(hPrevInstance);
-    UNREFERENCED_PARAMETER(lpCmdLine);
 
     // TODO: Place code here.
 
@@ -178,7 +181,7 @@ BOOL CreateEditorWindow(int nCmdShow)
 	ShowWindow(hWnd, nCmdShow);
 	UpdateWindow(hWnd);
 
-	RegisterHotKey(hWnd, PRINTSCREEN, 0, VK_SNAPSHOT);
+	DragAcceptFiles(hWnd, TRUE);
 
 	return TRUE;
 }
@@ -236,18 +239,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		if(editor.is_window_active && LOWORD(lParam) > 0 && HIWORD(lParam) > 0)
 			editor.SetWindow(hWnd);
 	    break;
-	case WM_HOTKEY:
-		switch (wParam)
-		{
-		case PRINTSCREEN:
-			{
-				wi::helper::screenshot(editor.swapChain);
-			}
-			break;
-		default:
-			break;
-		}
-		break;
 	case WM_CHAR:
 		switch (wParam)
 		{
@@ -301,6 +292,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 				}
 				}).detach();
 		}
+		editor.renderComponent.ReloadLanguage();
 		break;
     case WM_PAINT:
         {
@@ -310,6 +302,34 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             EndPaint(hWnd, &ps);
         }
         break;
+	case WM_DROPFILES:
+		{
+			HDROP hdrop = (HDROP)wParam;
+			UINT filecount = DragQueryFile(hdrop, 0xFFFFFFFF, nullptr, 0);
+			assert(filecount != 0);
+			for (UINT i = 0; i < filecount; ++i)
+			{
+				std::wstring wfilename;
+				UINT len = DragQueryFile(hdrop, i, nullptr, 0);
+				if (len == 0)
+				{
+					assert(0);
+					continue;
+				}
+				wfilename.resize(len + 1);
+				UINT res = DragQueryFile(hdrop, i, wfilename.data(), (UINT)wfilename.size());
+				if (res == 0)
+				{
+					assert(0);
+					continue;
+				}
+				std::string filename;
+				wi::helper::StringConvert(wfilename, filename);
+				editor.renderComponent.Open(filename);
+			}
+			SetForegroundWindow(hWnd);
+		}
+		break;
     case WM_DESTROY:
 		if (window_recreating)
 			window_recreating = false;

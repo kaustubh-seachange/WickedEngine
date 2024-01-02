@@ -10,25 +10,32 @@ static const float3 HAIRPATCH[] = {
 };
 
 Buffer<uint> meshIndexBuffer : register(t0);
-ByteAddressBuffer meshVertexBuffer_POS : register(t1);
-Buffer<float> meshVertexBuffer_length : register(t2);
+Buffer<float4> meshVertexBuffer_POS : register(t1);
+Buffer<float4> meshVertexBuffer_NOR : register(t2);
+Buffer<float> meshVertexBuffer_length : register(t3);
 
 RWStructuredBuffer<PatchSimulationData> simulationBuffer : register(u0);
-RWByteAddressBuffer vertexBuffer_POS : register(u1);
-RWByteAddressBuffer vertexBuffer_UVS : register(u2);
+RWBuffer<float4> vertexBuffer_POS : register(u1);
+RWBuffer<float4> vertexBuffer_UVS : register(u2);
 RWBuffer<uint> culledIndexBuffer : register(u3);
-RWByteAddressBuffer counterBuffer : register(u4);
+RWStructuredBuffer<IndirectDrawArgsIndexedInstanced> indirectBuffer : register(u4);
+RWBuffer<float4> vertexBuffer_POS_RT : register(u5);
+RWBuffer<float4> vertexBuffer_NOR : register(u6);
 
 [numthreads(THREADCOUNT_SIMULATEHAIR, 1, 1)]
 void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 {
 	if (DTid.x >= xHairParticleCount)
 		return;
-
-	// Generate patch:
-
+		
+	ShaderGeometry geometry = HairGetGeometry();
+	
+	RNG rng;
+	rng.init(uint2(xHairRandomSeed, DTid.x), 0);
+	
 	// random triangle on emitter surface:
-	uint tri = (uint)((xHairBaseMeshIndexCount / 3) * hash1(DTid.x));
+	const uint triangleCount = xHairBaseMeshIndexCount / 3;
+	const uint tri = rng.next_uint(triangleCount);
 
 	// load indices of triangle from index buffer
 	uint i0 = meshIndexBuffer[tri * 3 + 0];
@@ -36,19 +43,17 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 	uint i2 = meshIndexBuffer[tri * 3 + 2];
 
 	// load vertices of triangle from vertex buffer:
-	float4 pos_nor0 = asfloat(meshVertexBuffer_POS.Load4(i0 * xHairBaseMeshVertexPositionStride));
-	float4 pos_nor1 = asfloat(meshVertexBuffer_POS.Load4(i1 * xHairBaseMeshVertexPositionStride));
-	float4 pos_nor2 = asfloat(meshVertexBuffer_POS.Load4(i2 * xHairBaseMeshVertexPositionStride));
-    float3 nor0 = unpack_unitvector(asuint(pos_nor0.w));
-    float3 nor1 = unpack_unitvector(asuint(pos_nor1.w));
-    float3 nor2 = unpack_unitvector(asuint(pos_nor2.w));
+	float3 pos0 = meshVertexBuffer_POS[i0].xyz;
+	float3 pos1 = meshVertexBuffer_POS[i1].xyz;
+	float3 pos2 = meshVertexBuffer_POS[i2].xyz;
+	float3 nor0 = meshVertexBuffer_NOR[i0].xyz;
+	float3 nor1 = meshVertexBuffer_NOR[i1].xyz;
+	float3 nor2 = meshVertexBuffer_NOR[i2].xyz;
 	float length0 = meshVertexBuffer_length[i0];
 	float length1 = meshVertexBuffer_length[i1];
 	float length2 = meshVertexBuffer_length[i2];
 
 	// random barycentric coords:
-	RNG rng;
-	rng.init(uint2(xHairRandomSeed, DTid.x), 0);
 	float f = rng.next_float();
 	float g = rng.next_float();
 	[flatten]
@@ -57,13 +62,15 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 		f = 1 - f;
 		g = 1 - g;
 	}
+	float2 bary = float2(f, g);
 
 	// compute final surface position on triangle from barycentric coords:
-	float3 position = pos_nor0.xyz + f * (pos_nor1.xyz - pos_nor0.xyz) + g * (pos_nor2.xyz - pos_nor0.xyz);
-	float3 target = normalize(nor0 + f * (nor1 - nor0) + g * (nor2 - nor0));
+	float3 position = attribute_at_bary(pos0, pos1, pos2, bary);
+	position = mul(xHairBaseMeshUnormRemap.GetMatrix(), float4(position, 1)).xyz;
+	float3 target = normalize(attribute_at_bary(nor0, nor1, nor2, bary));
 	float3 tangent = normalize(mul(float3(hemispherepoint_cos(rng.next_float(), rng.next_float()).xy, 0), get_tangentspace(target)));
 	float3 binormal = cross(target, tangent);
-	float strand_length = length0 + f * (length1 - length0) + g * (length2 - length0);
+	float strand_length = attribute_at_bary(length0, length1, length2, bary);
 
 	uint tangent_random = 0;
 	tangent_random |= (uint)((uint)(tangent.x * 127.5f + 127.5f) << 0);
@@ -78,21 +85,25 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 	binormal_length |= (uint)(lerp(1, rng.next_float(), saturate(xHairRandomness)) * strand_length * 255) << 24;
 
 	// Identifies the hair strand root particle:
-    const uint strandID = DTid.x * xHairSegmentCount;
-    
+	const uint strandID = DTid.x * xHairSegmentCount;
+	
 	// Transform particle by the emitter object matrix:
-    float3 base = mul(xHairWorld, float4(position.xyz, 1)).xyz;
-    target = normalize(mul((float3x3)xHairWorld, target));
+	const float4x4 worldMatrix = xHairTransform.GetMatrix();
+	float3 base = mul(worldMatrix, float4(position.xyz, 1)).xyz;
+	target = normalize(mul((float3x3)worldMatrix, target));
 	const float3 root = base;
 
-	const float3 diff = root - GetCamera().position;
+	float3 diff = GetCamera().position - root;
 	const float distsq = dot(diff, diff);
-	const bool distance_culled = dot(diff, diff) > sqr(xHairViewDistance);
+	const bool distance_culled = distsq > sqr(xHairViewDistance);
+
+	// Bend down to camera up vector to avoid seeing flat planes from above
+	const float3 bend = GetCamera().up * (1 - saturate(dot(target, GetCamera().up))) * 0.8;
 
 	float3 normal = 0;
 
 	const float delta_time = clamp(GetFrame().delta_time, 0, 1.0 / 30.0); // clamp delta time to avoid simulation blowing up
-    
+	
 	for (uint segmentID = 0; segmentID < xHairSegmentCount; ++segmentID)
 	{
 		// Identifies the hair strand segment particle:
@@ -103,12 +114,11 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 		if (xHairRegenerate)
 		{
 			simulationBuffer[particleID].position = base;
-			simulationBuffer[particleID].normal = target;
-			simulationBuffer[particleID].velocity = 0;
+			simulationBuffer[particleID].normal_velocity = f32tof16(target);
 		}
 
-        normal += simulationBuffer[particleID].normal;
-        normal = normalize(normal);
+		normal += f16tof32(simulationBuffer[particleID].normal_velocity);
+		normal = normalize(normal);
 
 		float len = (binormal_length >> 24) & 0x000000FF;
 		len /= 255.0f;
@@ -119,8 +129,8 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 
 		// Accumulate forces, apply colliders:
 		float3 force = 0;
-        for (uint i = 0; i < GetFrame().forcefieldarray_count; ++i)
-        {
+		for (uint i = 0; i < GetFrame().forcefieldarray_count; ++i)
+		{
 			ShaderEntity entity = load_entity(GetFrame().forcefieldarray_offset + i);
 
 			[branch]
@@ -194,19 +204,19 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 					}
 				}
 			}
-        }
+		}
 
 		// Pull back to rest position:
-        force += (target - normal) * xStiffness;
+		force += (target - normal) * xStiffness;
 
-        force *= delta_time;
+		force *= delta_time;
 
 		// Simulation buffer load:
-        float3 velocity = simulationBuffer[particleID].velocity;
+		float3 velocity = f16tof32(simulationBuffer[particleID].normal_velocity >> 16u);
 
 		// Apply surface-movement-based velocity:
 		const float3 old_base = simulationBuffer[particleID].position;
-		const float3 old_normal = simulationBuffer[particleID].normal;
+		const float3 old_normal = f16tof32(simulationBuffer[particleID].normal_velocity);
 		const float3 old_tip = old_base + old_normal * len;
 		const float3 surface_velocity = old_tip - tip;
 		velocity += surface_velocity;
@@ -224,13 +234,9 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 		// Drag:
 		velocity *= 0.98f;
 
-		// Store particle:
-		simulationBuffer[particleID].position = base;
-		simulationBuffer[particleID].normal = normal;
-
 		// Store simulation data:
-		simulationBuffer[particleID].velocity = velocity;
-
+		simulationBuffer[particleID].position = base;
+		simulationBuffer[particleID].normal_velocity = f32tof16(normal) | (f32tof16(velocity) << 16u);
 
 		// Write out render buffers:
 		//	These must be persistent, not culled (raytracing, surfels...)
@@ -238,7 +244,7 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 		uint i0 = particleID * 6;
 
 		uint rand = (tangent_random >> 24) & 0x000000FF;
-		float3x3 TBN = float3x3(tangent, normal, binormal); // don't derive binormal, because we want the shear!
+		float3x3 TBN = float3x3(tangent, normalize(normal + bend), binormal); // don't derive binormal, because we want the shear!
 		float3 rootposition = base - normal * 0.1 * len; // inset to the emitter a bit, to avoid disconnect:
 		float2 frame = float2(xHairAspect, 1) * len * 0.5;
 		const uint currentFrame = (xHairFrameStart + rand) % xHairFrameCount;
@@ -265,31 +271,42 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 			patchPos = mul(patchPos, TBN);
 
 			// simplistic wind effect only affects the top, but leaves the base as is:
-			const float3 wind = compute_wind(rootposition, segmentID + patchPos.y);
+			const float3 wind = sample_wind(rootposition, segmentID + patchPos.y);
 
 			float3 position = rootposition + patchPos + wind;
+			position = inverse_lerp(geometry.aabb_min, geometry.aabb_max, position); // remap to UNORM
+			
+			vertexBuffer_POS[v0 + vertexID] = float4(position, 0);
+			vertexBuffer_NOR[v0 + vertexID] = float4(normalize(normal + wind), 0);
+			vertexBuffer_UVS[v0 + vertexID] = uv.xyxy; // a second uv set could be used here
+			
 			if (distance_culled)
 			{
-				position = 0;
+				position = 0; // We can only zero out for raytracing geometry to keep correct prevpos swapping motion vectors!
 			}
-
-			uint4 data;
-			data.xyz = asuint(position);
-			data.w = pack_unitvector(normalize(normal + wind));
-			vertexBuffer_POS.Store4((v0 + vertexID) * 16, data);
-			vertexBuffer_UVS.Store2((v0 + vertexID) * 8, pack_half4(float4(uv, uv))); // a second uv set could be used here
+			vertexBuffer_POS_RT[v0 + vertexID] = float4(position, 0);
 		}
 
 		// Frustum culling:
 		ShaderSphere sphere;
 		sphere.center = (base + tip) * 0.5;
 		sphere.radius = len;
-
-		if (!distance_culled && GetCamera().frustum.intersects(sphere))
+		
+		const bool visible = !distance_culled && GetCamera().frustum.intersects(sphere);
+		
+		// Optimization: reduce to 1 atomic operation per wave
+		const uint waveAppendCount = WaveActiveCountBits(visible);
+		uint waveOffset;
+		if (WaveIsFirstLane() && waveAppendCount > 0)
 		{
-			uint prevCount;
-			counterBuffer.InterlockedAdd(0, 1, prevCount);
-			uint ii0 = prevCount * 6;
+			InterlockedAdd(indirectBuffer[0].IndexCountPerInstance, waveAppendCount * 6, waveOffset);
+		}
+		waveOffset = WaveReadLaneFirst(waveOffset);
+
+		if (visible)
+		{
+			uint prevCount = waveOffset + WavePrefixSum(6u);
+			uint ii0 = prevCount;
 			culledIndexBuffer[ii0 + 0] = i0 + 0;
 			culledIndexBuffer[ii0 + 1] = i0 + 1;
 			culledIndexBuffer[ii0 + 2] = i0 + 2;
@@ -300,5 +317,5 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 
 		// Offset next segment root to current tip:
 		base = tip;
-    }
+	}
 }

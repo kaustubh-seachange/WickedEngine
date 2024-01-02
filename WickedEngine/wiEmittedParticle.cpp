@@ -30,8 +30,8 @@ namespace wi
 	static Shader emitCS_VOLUME;
 	static Shader emitCS_FROMMESH;
 	static Shader sphpartitionCS;
-	static Shader sphpartitionoffsetsCS;
-	static Shader sphpartitionoffsetsresetCS;
+	static Shader sphcellallocationCS;
+	static Shader sphbinningCS;
 	static Shader sphdensityCS;
 	static Shader sphforceCS;
 	static Shader simulateCS;
@@ -87,62 +87,73 @@ namespace wi
 			device->SetName(&culledIndirectionBuffer2, "EmittedParticleSystem::culledIndirectionBuffer2");
 
 			// Dead index list:
-			wi::vector<uint32_t> indices(MAX_PARTICLES);
-			for (uint32_t i = 0; i < MAX_PARTICLES; ++i)
-			{
-				indices[i] = i;
-			}
-			device->CreateBuffer(&bd, indices.data(), &deadList);
+			auto fill_dead_indices = [&](void* dest) {
+				uint32_t* indices = (uint32_t*)dest;
+				for (uint32_t i = 0; i < MAX_PARTICLES; ++i)
+				{
+					std::memcpy(indices + i, &i, sizeof(uint32_t));
+				}
+			};
+			device->CreateBuffer2(&bd, fill_dead_indices, &deadList);
 			device->SetName(&deadList, "EmittedParticleSystem::deadList");
 
-
-			bd.misc_flags = ResourceMiscFlag::BUFFER_RAW;
+			bd.misc_flags = ResourceMiscFlag::BUFFER_RAW | ResourceMiscFlag::TYPED_FORMAT_CASTING | ResourceMiscFlag::NO_DEFAULT_DESCRIPTORS;
 			if (device->CheckCapability(GraphicsDeviceCapability::RAYTRACING))
 			{
 				bd.misc_flags |= ResourceMiscFlag::RAY_TRACING;
 			}
-			bd.stride = sizeof(MeshComponent::Vertex_POS);
-			bd.size = bd.stride * 4 * MAX_PARTICLES;
-			wi::vector<MeshComponent::Vertex_POS> positionData(4 * MAX_PARTICLES);
-			std::fill(positionData.begin(), positionData.end(), MeshComponent::Vertex_POS());
-			device->CreateBuffer(&bd, positionData.data(), &vertexBuffer_POS);
-			device->SetName(&vertexBuffer_POS, "EmittedParticleSystem::vertexBuffer_POS");
+			const uint64_t alignment = device->GetMinOffsetAlignment(&bd);
 
-			bd.misc_flags = ResourceMiscFlag::BUFFER_RAW;
-			bd.stride = sizeof(MeshComponent::Vertex_UVS);
-			bd.size = bd.stride * 4 * MAX_PARTICLES;
-			device->CreateBuffer(&bd, nullptr, &vertexBuffer_UVS);
-			device->SetName(&vertexBuffer_UVS, "EmittedParticleSystem::vertexBuffer_UVS");
+			vb_pos.size = sizeof(MeshComponent::Vertex_POS32) * 4 * MAX_PARTICLES;
+			vb_nor.size = sizeof(MeshComponent::Vertex_NOR) * 4 * MAX_PARTICLES;
+			vb_uvs.size = sizeof(MeshComponent::Vertex_UVS) * 4 * MAX_PARTICLES;
+			vb_col.size = sizeof(MeshComponent::Vertex_COL) * 4 * MAX_PARTICLES;
 
-			bd.misc_flags = ResourceMiscFlag::BUFFER_RAW;
-			bd.stride = sizeof(MeshComponent::Vertex_COL);
-			bd.size = bd.stride * 4 * MAX_PARTICLES;
-			device->CreateBuffer(&bd, nullptr, &vertexBuffer_COL);
-			device->SetName(&vertexBuffer_COL, "EmittedParticleSystem::vertexBuffer_COL");
+			bd.size =
+				AlignTo(vb_pos.size, alignment) +
+				AlignTo(vb_nor.size, alignment) +
+				AlignTo(vb_uvs.size, alignment) +
+				AlignTo(vb_col.size, alignment)
+			;
 
-			bd.bind_flags = BindFlag::SHADER_RESOURCE;
-			bd.misc_flags = ResourceMiscFlag::NONE;
-			if (device->CheckCapability(GraphicsDeviceCapability::RAYTRACING))
-			{
-				bd.misc_flags |= ResourceMiscFlag::RAY_TRACING;
-			}
-			bd.format = Format::R32_UINT;
-			bd.stride = sizeof(uint);
-			bd.size = bd.stride * 6 * MAX_PARTICLES;
-			wi::vector<uint> primitiveData(6 * MAX_PARTICLES);
-			for (uint particleID = 0; particleID < MAX_PARTICLES; ++particleID)
-			{
-				uint v0 = particleID * 4;
-				uint i0 = particleID * 6;
-				primitiveData[i0 + 0] = v0 + 0;
-				primitiveData[i0 + 1] = v0 + 1;
-				primitiveData[i0 + 2] = v0 + 2;
-				primitiveData[i0 + 3] = v0 + 2;
-				primitiveData[i0 + 4] = v0 + 1;
-				primitiveData[i0 + 5] = v0 + 3;
-			}
-			device->CreateBuffer(&bd, primitiveData.data(), &primitiveBuffer);
-			device->SetName(&primitiveBuffer, "EmittedParticleSystem::primitiveBuffer");
+			device->CreateBuffer(&bd, nullptr, &generalBuffer);
+			device->SetName(&generalBuffer, "EmittedParticleSystem::generalBuffer");
+
+			uint64_t buffer_offset = 0ull;
+
+			buffer_offset = AlignTo(buffer_offset, alignment);
+			vb_pos.offset = buffer_offset;
+			vb_pos.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_pos.offset, vb_pos.size, &MeshComponent::Vertex_POS32::FORMAT);
+			vb_pos.subresource_uav = device->CreateSubresource(&generalBuffer, SubresourceType::UAV, vb_pos.offset, vb_pos.size); // UAV can't have RGB32_F format!
+			vb_pos.descriptor_srv = device->GetDescriptorIndex(&generalBuffer, SubresourceType::SRV, vb_pos.subresource_srv);
+			vb_pos.descriptor_uav = device->GetDescriptorIndex(&generalBuffer, SubresourceType::UAV, vb_pos.subresource_uav);
+			buffer_offset += vb_pos.size;
+
+			buffer_offset = AlignTo(buffer_offset, alignment);
+			vb_nor.offset = buffer_offset;
+			vb_nor.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_nor.offset, vb_nor.size, &MeshComponent::Vertex_NOR::FORMAT);
+			vb_nor.subresource_uav = device->CreateSubresource(&generalBuffer, SubresourceType::UAV, vb_nor.offset, vb_nor.size, &MeshComponent::Vertex_NOR::FORMAT);
+			vb_nor.descriptor_srv = device->GetDescriptorIndex(&generalBuffer, SubresourceType::SRV, vb_nor.subresource_srv);
+			vb_nor.descriptor_uav = device->GetDescriptorIndex(&generalBuffer, SubresourceType::UAV, vb_nor.subresource_uav);
+			buffer_offset += vb_nor.size;
+
+			buffer_offset = AlignTo(buffer_offset, alignment);
+			vb_uvs.offset = buffer_offset;
+			vb_uvs.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_uvs.offset, vb_uvs.size, &MeshComponent::Vertex_UVS::FORMAT);
+			vb_uvs.subresource_uav = device->CreateSubresource(&generalBuffer, SubresourceType::UAV, vb_uvs.offset, vb_uvs.size, &MeshComponent::Vertex_UVS::FORMAT);
+			vb_uvs.descriptor_srv = device->GetDescriptorIndex(&generalBuffer, SubresourceType::SRV, vb_uvs.subresource_srv);
+			vb_uvs.descriptor_uav = device->GetDescriptorIndex(&generalBuffer, SubresourceType::UAV, vb_uvs.subresource_uav);
+			buffer_offset += vb_uvs.size;
+
+			buffer_offset = AlignTo(buffer_offset, alignment);
+			vb_col.offset = buffer_offset;
+			vb_col.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_col.offset, vb_col.size, &MeshComponent::Vertex_COL::FORMAT);
+			vb_col.subresource_uav = device->CreateSubresource(&generalBuffer, SubresourceType::UAV, vb_col.offset, vb_col.size, &MeshComponent::Vertex_COL::FORMAT);
+			vb_col.descriptor_srv = device->GetDescriptorIndex(&generalBuffer, SubresourceType::SRV, vb_col.subresource_srv);
+			vb_col.descriptor_uav = device->GetDescriptorIndex(&generalBuffer, SubresourceType::UAV, vb_col.subresource_uav);
+			buffer_offset += vb_col.size;
+
+			primitiveBuffer = wi::renderer::GetIndexBufferForQuads(MAX_PARTICLES);
 		}
 
 		if (IsSorted() && distanceBuffer.desc.size < MAX_PARTICLES * sizeof(float))
@@ -154,9 +165,11 @@ namespace wi
 			bd.misc_flags = ResourceMiscFlag::BUFFER_STRUCTURED;
 			bd.stride = sizeof(float);
 			bd.size = bd.stride * MAX_PARTICLES;
-			wi::vector<float> distances(MAX_PARTICLES);
-			std::fill(distances.begin(), distances.end(), 0.0f);
-			device->CreateBuffer(&bd, distances.data(), &distanceBuffer);
+			auto init_distances = [&](void* dest) {
+				float* distances = (float*)dest;
+				std::fill(distances, distances + MAX_PARTICLES, 0.0f);
+			};
+			device->CreateBuffer2(&bd, init_distances, &distanceBuffer);
 			device->SetName(&distanceBuffer, "EmittedParticleSystem::distanceBuffer");
 		}
 
@@ -167,14 +180,8 @@ namespace wi
 			bd.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
 			bd.misc_flags = ResourceMiscFlag::BUFFER_STRUCTURED;
 
-			if (sphPartitionCellIndices.desc.size < MAX_PARTICLES * sizeof(float))
+			if (densityBuffer.desc.size < MAX_PARTICLES * sizeof(float))
 			{
-				// SPH Partitioning grid indices per particle:
-				bd.stride = sizeof(float); // really, it is uint, but sorting is performing comparisons on floats, so whateva
-				bd.size = bd.stride * MAX_PARTICLES;
-				device->CreateBuffer(&bd, nullptr, &sphPartitionCellIndices);
-				device->SetName(&sphPartitionCellIndices, "EmittedParticleSystem::sphPartitionCellIndices");
-
 				// Density buffer (for SPH simulation):
 				bd.stride = sizeof(float);
 				bd.size = bd.stride * MAX_PARTICLES;
@@ -182,20 +189,29 @@ namespace wi
 				device->SetName(&densityBuffer, "EmittedParticleSystem::densityBuffer");
 			}
 
-			if (sphPartitionCellOffsets.desc.size < SPH_PARTITION_BUCKET_COUNT * sizeof(uint32_t))
+			if (sphGridCells.desc.size < SPH_PARTITION_BUCKET_COUNT * sizeof(SPHGridCell))
 			{
-				// SPH Partitioning grid cell offsets into particle index list:
-				bd.stride = sizeof(uint32_t);
+				// SPH Partitioning grid cell offsets,counts into particle index list:
+				bd.stride = sizeof(SPHGridCell);
 				bd.size = bd.stride * SPH_PARTITION_BUCKET_COUNT;
-				device->CreateBuffer(&bd, nullptr, &sphPartitionCellOffsets);
-				device->SetName(&sphPartitionCellOffsets, "EmittedParticleSystem::sphPartitionCellOffsets");
+				device->CreateBuffer(&bd, nullptr, &sphGridCells);
+				device->SetName(&sphGridCells, "EmittedParticleSystem::sphGridCells");
+			}
+
+			if (sphParticleCells.desc.size < MAX_PARTICLES * sizeof(uint))
+			{
+				// Compacted particle lists per grid cell  (for SPH simulation):
+				bd.stride = sizeof(float);
+				bd.size = bd.stride * MAX_PARTICLES;
+				device->CreateBuffer(&bd, nullptr, &sphParticleCells);
+				device->SetName(&sphParticleCells, "EmittedParticleSystem::sphParticleCells");
 			}
 		}
 		else
 		{
-			sphPartitionCellIndices = {};
 			densityBuffer = {};
-			sphPartitionCellOffsets = {};
+			sphGridCells = {};
+			sphParticleCells = {};
 		}
 
 		if (!counterBuffer.IsValid())
@@ -206,13 +222,12 @@ namespace wi
 			counters.deadCount = MAX_PARTICLES;
 			counters.realEmitCount = 0;
 			counters.aliveCount_afterSimulation = 0;
+			counters.cellAllocator = 0;
 
 			GPUBufferDesc bd;
 			bd.usage = Usage::DEFAULT;
 			bd.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-			bd.misc_flags = ResourceMiscFlag::BUFFER_STRUCTURED;
 			bd.size = sizeof(counters);
-			bd.stride = sizeof(counters);
 			bd.misc_flags = ResourceMiscFlag::BUFFER_RAW;
 			device->CreateBuffer(&bd, &counters, &counterBuffer);
 			device->SetName(&counterBuffer, "EmittedParticleSystem::counterBuffer");
@@ -227,9 +242,9 @@ namespace wi
 			bd.bind_flags = BindFlag::UNORDERED_ACCESS;
 			bd.misc_flags = ResourceMiscFlag::BUFFER_RAW | ResourceMiscFlag::INDIRECT_ARGS;
 			bd.size =
-				sizeof(wi::graphics::IndirectDispatchArgs) +
-				sizeof(wi::graphics::IndirectDispatchArgs) +
-				sizeof(wi::graphics::IndirectDrawArgsInstanced);
+				AlignTo(sizeof(IndirectDispatchArgs), (uint64_t)IndirectDispatchArgsAlignment) +
+				AlignTo(sizeof(IndirectDispatchArgs), (uint64_t)IndirectDispatchArgsAlignment) +
+				AlignTo(sizeof(IndirectDrawArgsInstanced), (uint64_t)IndirectDrawArgsAlignment);
 			device->CreateBuffer(&bd, nullptr, &indirectBuffers);
 			device->SetName(&indirectBuffers, "EmittedParticleSystem::indirectBuffers");
 
@@ -271,14 +286,14 @@ namespace wi
 			desc.bottom_level.geometries.emplace_back();
 			auto& geometry = desc.bottom_level.geometries.back();
 			geometry.type = RaytracingAccelerationStructureDesc::BottomLevel::Geometry::Type::TRIANGLES;
-			geometry.triangles.vertex_buffer = vertexBuffer_POS;
+			geometry.triangles.vertex_buffer = generalBuffer;
 			geometry.triangles.index_buffer = primitiveBuffer;
-			geometry.triangles.index_format = IndexBufferFormat::UINT32;
-			geometry.triangles.index_count = (uint32_t)(primitiveBuffer.desc.size / primitiveBuffer.desc.stride);
+			geometry.triangles.index_format = GetIndexBufferFormat(primitiveBuffer.desc.format);
+			geometry.triangles.index_count = MAX_PARTICLES * 6;
 			geometry.triangles.index_offset = 0;
-			geometry.triangles.vertex_count = (uint32_t)(vertexBuffer_POS.desc.size / vertexBuffer_POS.desc.stride);
-			geometry.triangles.vertex_format = Format::R32G32B32_FLOAT;
-			geometry.triangles.vertex_stride = sizeof(MeshComponent::Vertex_POS);
+			geometry.triangles.vertex_count = (uint32_t)(vb_pos.size / sizeof(MeshComponent::Vertex_POS32));
+			geometry.triangles.vertex_format = MeshComponent::Vertex_POS32::FORMAT;
+			geometry.triangles.vertex_stride = sizeof(MeshComponent::Vertex_POS32);
 
 			bool success = device->CreateRaytracingAccelerationStructure(&desc, &BLAS);
 			assert(success);
@@ -298,16 +313,13 @@ namespace wi
 		retVal += aliveList[1].GetDesc().size;
 		retVal += deadList.GetDesc().size;
 		retVal += distanceBuffer.GetDesc().size;
-		retVal += sphPartitionCellIndices.GetDesc().size;
-		retVal += sphPartitionCellOffsets.GetDesc().size;
+		retVal += sphGridCells.GetDesc().size;
+		retVal += sphParticleCells.GetDesc().size;
 		retVal += densityBuffer.GetDesc().size;
 		retVal += counterBuffer.GetDesc().size;
 		retVal += indirectBuffers.GetDesc().size;
 		retVal += constantBuffer.GetDesc().size;
-		retVal += vertexBuffer_POS.GetDesc().size;
-		retVal += vertexBuffer_UVS.GetDesc().size;
-		retVal += vertexBuffer_COL.GetDesc().size;
-		retVal += primitiveBuffer.GetDesc().size;
+		retVal += generalBuffer.GetDesc().size;
 		retVal += culledIndirectionBuffer.GetDesc().size;
 		retVal += culledIndirectionBuffer2.GetDesc().size;
 
@@ -316,9 +328,10 @@ namespace wi
 
 	void EmittedParticleSystem::UpdateCPU(const TransformComponent& transform, float dt)
 	{
+		this->dt = dt;
 		CreateSelfBuffers();
 
-		if (IsPaused())
+		if (IsPaused() || dt == 0)
 			return;
 
 		emit = std::max(0.0f, emit - std::floor(emit));
@@ -330,16 +343,14 @@ namespace wi
 		emit += burst;
 		burst = 0;
 
+		worldMatrix = transform.world;
+
 		// Swap CURRENT alivelist with NEW alivelist
 		std::swap(aliveList[0], aliveList[1]);
 
 		// Read back statistics (with GPU delay):
-		if (statisticsReadBackIndex > arraysize(statisticsReadbackBuffer))
-		{
-			const uint32_t oldest_stat_index = (statisticsReadBackIndex + 1) % arraysize(statisticsReadbackBuffer);
-			memcpy(&statistics, statisticsReadbackBuffer[oldest_stat_index].mapped_data, sizeof(statistics));
-		}
-		statisticsReadBackIndex++;
+		const uint32_t oldest_stat_index = wi::graphics::GetDevice()->GetBufferIndex();
+		memcpy(&statistics, statisticsReadbackBuffer[oldest_stat_index].mapped_data, sizeof(statistics));
 	}
 	void EmittedParticleSystem::Burst(int num)
 	{
@@ -354,7 +365,7 @@ namespace wi
 		counterBuffer = {}; // will be recreated
 	}
 
-	void EmittedParticleSystem::UpdateGPU(uint32_t instanceIndex, const TransformComponent& transform, const MeshComponent* mesh, CommandList cmd) const
+	void EmittedParticleSystem::UpdateGPU(uint32_t instanceIndex, const MeshComponent* mesh, CommandList cmd) const
 	{
 		if (!particleBuffer.IsValid())
 		{
@@ -364,14 +375,35 @@ namespace wi
 		GraphicsDevice* device = wi::graphics::GetDevice();
 		device->EventBegin("UpdateEmittedParticles", cmd);
 
-		if (!IsPaused())
+		if (!IsPaused() && dt > 0)
 		{
 			EmittedParticleCB cb;
-			cb.xEmitterWorld = transform.world;
+			cb.xEmitterTransform.Create(worldMatrix);
+			if (mesh == nullptr || !IsFormatUnorm(mesh->position_format) || mesh->so_pos.IsValid())
+			{
+				cb.xEmitterBaseMeshUnormRemap.init();
+			}
+			else
+			{
+				XMFLOAT4X4 unormRemap;
+				XMStoreFloat4x4(&unormRemap, mesh->aabb.getUnormRemapMatrix());
+				cb.xEmitterBaseMeshUnormRemap.Create(unormRemap);
+			}
 			cb.xEmitCount = (uint32_t)emit;
-			cb.xEmitterMeshIndexCount = mesh == nullptr ? 0 : (uint32_t)mesh->indices.size();
-			cb.xEmitterMeshVertexPositionStride = sizeof(MeshComponent::Vertex_POS);
-			cb.xEmitterRandomness = wi::random::GetRandom(0, 1000) * 0.001f;
+			if (mesh == nullptr)
+			{
+				cb.xEmitterMeshGeometryOffset = 0;
+				cb.xEmitterMeshGeometryCount = 0;
+			}
+			else
+			{
+				uint32_t first_subset = 0;
+				uint32_t last_subset = 0;
+				mesh->GetLODSubsetRange(0, first_subset, last_subset);
+				cb.xEmitterMeshGeometryOffset = mesh->geometryOffset + first_subset;
+				cb.xEmitterMeshGeometryCount = last_subset - first_subset;
+			}
+			cb.xEmitterRandomness = wi::random::GetRandom(0.0f, 1.0f);
 			cb.xParticleLifeSpan = life;
 			cb.xParticleLifeSpanRandomness = random_life;
 			cb.xParticleNormalFactor = normal_factor;
@@ -391,7 +423,7 @@ namespace wi
 			cb.xEmitterFrameRate = frameRate;
 			cb.xParticleGravity = gravity;
 			cb.xParticleDrag = drag;
-			XMStoreFloat3(&cb.xParticleVelocity, XMVector3TransformNormal(XMLoadFloat3(&velocity), XMLoadFloat4x4(&transform.world)));
+			XMStoreFloat3(&cb.xParticleVelocity, XMVector3TransformNormal(XMLoadFloat3(&velocity), XMLoadFloat4x4(&worldMatrix)));
 			cb.xParticleRandomColorFactor = random_color;
 			cb.xEmitterLayerMask = layerMask;
 			cb.xEmitterInstanceIndex = instanceIndex;
@@ -409,6 +441,18 @@ namespace wi
 			{
 				cb.xEmitterOptions |= EMITTER_OPTION_BIT_MESH_SHADER_ENABLED;
 			}
+			if (IsCollidersDisabled())
+			{
+				cb.xEmitterOptions |= EMITTER_OPTION_BIT_COLLIDERS_DISABLED;
+			}
+			if (_flags & FLAG_USE_RAIN_BLOCKER)
+			{
+				cb.xEmitterOptions |= EMITTER_OPTION_BIT_USE_RAIN_BLOCKER;
+			}
+			if (IsTakeColorFromMesh())
+			{
+				cb.xEmitterOptions |= EMITTER_OPTION_BIT_TAKE_COLOR_FROM_MESH;
+			}
 
 			// SPH:
 			cb.xSPH_h = SPH_h;
@@ -424,12 +468,6 @@ namespace wi
 			cb.xSPH_p0 = SPH_p0;
 			cb.xSPH_e = SPH_e;
 
-			{
-				GPUBarrier barriers[] = {
-					GPUBarrier::Buffer(&constantBuffer, ResourceState::CONSTANT_BUFFER, ResourceState::COPY_DST),
-				};
-				device->Barrier(barriers, arraysize(barriers), cmd);
-			}
 			device->UpdateBuffer(&constantBuffer, &cb, cmd);
 			{
 				GPUBarrier barriers[] = {
@@ -440,34 +478,19 @@ namespace wi
 
 			device->BindConstantBuffer(&constantBuffer, CB_GETBINDSLOT(EmittedParticleCB), cmd);
 
-			const GPUResource* uavs[] = {
-				&particleBuffer,
-				&aliveList[0], // CURRENT alivelist
-				&aliveList[1], // NEW alivelist
-				&deadList,
-				&counterBuffer,
-				&indirectBuffers,
-				&distanceBuffer,
-				&vertexBuffer_POS,
-				&vertexBuffer_UVS,
-				&vertexBuffer_COL,
-				&culledIndirectionBuffer,
-				&culledIndirectionBuffer2,
-			};
-			device->BindUAVs(uavs, 0, arraysize(uavs), cmd);
-
-			if (mesh != nullptr)
-			{
-				device->BindResource(&mesh->generalBuffer, 0, cmd, mesh->ib.subresource_srv);
-				if (mesh->streamoutBuffer.IsValid())
-				{
-					device->BindResource(&mesh->streamoutBuffer, 1, cmd, mesh->so_pos_nor_wind.subresource_srv);
-				}
-				else
-				{
-					device->BindResource(&mesh->generalBuffer, 1, cmd, mesh->vb_pos_nor_wind.subresource_srv);
-				}
-			}
+			device->BindUAV(&particleBuffer, 0, cmd);
+			device->BindUAV(&aliveList[0], 1, cmd);
+			device->BindUAV(&aliveList[1], 2, cmd);
+			device->BindUAV(&deadList, 3, cmd);
+			device->BindUAV(&counterBuffer, 4, cmd);
+			device->BindUAV(&indirectBuffers, 5, cmd);
+			device->BindUAV(&distanceBuffer, 6, cmd);
+			device->BindUAV(&generalBuffer, 7, cmd, vb_pos.subresource_uav);
+			device->BindUAV(&generalBuffer, 8, cmd, vb_nor.subresource_uav);
+			device->BindUAV(&generalBuffer, 9, cmd, vb_uvs.subresource_uav);
+			device->BindUAV(&generalBuffer, 10, cmd, vb_col.subresource_uav);
+			device->BindUAV(&culledIndirectionBuffer, 11, cmd);
+			device->BindUAV(&culledIndirectionBuffer2, 12, cmd);
 
 			GPUBarrier barrier_indirect_uav = GPUBarrier::Buffer(&indirectBuffers, ResourceState::INDIRECT_ARGUMENT, ResourceState::UNORDERED_ACCESS);
 			GPUBarrier barrier_uav_indirect = GPUBarrier::Buffer(&indirectBuffers, ResourceState::UNORDERED_ACCESS, ResourceState::INDIRECT_ARGUMENT);
@@ -499,48 +522,78 @@ namespace wi
 				device->EventBegin("SPH - Simulation", cmd);
 
 #ifdef SPH_USE_ACCELERATION_GRID
-				// 1.) Assign particles into partitioning grid:
-				device->EventBegin("Partitioning", cmd);
+				// Reset grid cell offset buffer with invalid offsets (max uint):
+				device->EventBegin("Grid - Reset", cmd);
+				device->ClearUAV(&sphGridCells, 0, cmd);
+				device->Barrier(&barrier_memory, 1, cmd);
+				device->EventEnd(cmd);
+
+				// Assign particles into partitioning grid:
+				device->EventBegin("Particles - Grid Partitioning", cmd);
 				device->BindComputeShader(&sphpartitionCS, cmd);
 				const GPUResource* res_partition[] = {
 					&aliveList[0], // CURRENT alivelist
-					&counterBuffer,
 					&particleBuffer,
 				};
 				device->BindResources(res_partition, 0, arraysize(res_partition), cmd);
 				const GPUResource* uav_partition[] = {
-					&sphPartitionCellIndices,
+					&counterBuffer,
+					&sphGridCells,
 				};
 				device->BindUAVs(uav_partition, 0, arraysize(uav_partition), cmd);
 				device->DispatchIndirect(&indirectBuffers, ARGUMENTBUFFER_OFFSET_DISPATCHSIMULATION, cmd);
-				device->Barrier(&barrier_memory, 1, cmd);
+				{
+					GPUBarrier barriers[] = {
+						GPUBarrier::Memory(&sphGridCells),
+					};
+					device->Barrier(barriers, arraysize(barriers), cmd);
+				}
 				device->EventEnd(cmd);
 
-				// 2.) Sort particle index list based on partition grid cell index:
-				wi::gpusortlib::Sort(MAX_PARTICLES, sphPartitionCellIndices, counterBuffer, PARTICLECOUNTER_OFFSET_ALIVECOUNT, aliveList[0], cmd);
-
-				// 3.) Reset grid cell offset buffer with invalid offsets (max uint):
-				device->EventBegin("PartitionOffsetsReset", cmd);
-				device->BindComputeShader(&sphpartitionoffsetsresetCS, cmd);
-				const GPUResource* uav_partitionoffsets[] = {
-					&sphPartitionCellOffsets,
-				};
-				device->BindUAVs(uav_partitionoffsets, 0, arraysize(uav_partitionoffsets), cmd);
-				device->Dispatch((SPH_PARTITION_BUCKET_COUNT + THREADCOUNT_SIMULATION - 1) / THREADCOUNT_SIMULATION, 1, 1, cmd);
-				device->Barrier(&barrier_memory, 1, cmd);
-				device->EventEnd(cmd);
-
-				// 4.) Assemble grid cell offsets from the sorted particle index list <--> grid cell index list connection:
-				device->EventBegin("PartitionOffsets", cmd);
-				device->BindComputeShader(&sphpartitionoffsetsCS, cmd);
-				const GPUResource* res_partitionoffsets[] = {
+				// Each grid cell allocates space for its own particle list:
+				device->EventBegin("Grid - Cell Allocation", cmd);
+				device->BindComputeShader(&sphcellallocationCS, cmd);
+				const GPUResource* res_cellallocation[] = {
 					&aliveList[0], // CURRENT alivelist
-					&counterBuffer,
-					&sphPartitionCellIndices,
+					&particleBuffer,
 				};
-				device->BindResources(res_partitionoffsets, 0, arraysize(res_partitionoffsets), cmd);
+				device->BindResources(res_cellallocation, 0, arraysize(res_cellallocation), cmd);
+				const GPUResource* uav_cellallocation[] = {
+					&counterBuffer,
+					&sphGridCells,
+				};
+				device->BindUAVs(uav_cellallocation, 0, arraysize(uav_cellallocation), cmd);
+				device->Dispatch((SPH_PARTITION_BUCKET_COUNT + THREADCOUNT_SIMULATION - 1) / THREADCOUNT_SIMULATION, 1, 1, cmd);
+				{
+					GPUBarrier barriers[] = {
+						GPUBarrier::Memory(&sphGridCells),
+					};
+					device->Barrier(barriers, arraysize(barriers), cmd);
+				}
+				device->EventEnd(cmd);
+
+				// Each particle bins itself to a grid cell:
+				device->EventBegin("Particles - Binning", cmd);
+				device->BindComputeShader(&sphbinningCS, cmd);
+				const GPUResource* res_binning[] = {
+					&aliveList[0], // CURRENT alivelist
+					&particleBuffer,
+				};
+				device->BindResources(res_binning, 0, arraysize(res_binning), cmd);
+				const GPUResource* uav_binning[] = {
+					&counterBuffer,
+					&sphGridCells,
+					&sphParticleCells,
+				};
+				device->BindUAVs(uav_binning, 0, arraysize(uav_binning), cmd);
 				device->DispatchIndirect(&indirectBuffers, ARGUMENTBUFFER_OFFSET_DISPATCHSIMULATION, cmd);
-				device->Barrier(&barrier_memory, 1, cmd);
+				{
+					GPUBarrier barriers[] = {
+						GPUBarrier::Buffer(&sphGridCells, ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE_COMPUTE),
+						GPUBarrier::Buffer(&sphParticleCells, ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE_COMPUTE),
+					};
+					device->Barrier(barriers, arraysize(barriers), cmd);
+				}
 				device->EventEnd(cmd);
 
 #endif // SPH_USE_ACCELERATION_GRID
@@ -550,13 +603,13 @@ namespace wi
 				device->BindComputeShader(&sphdensityCS, cmd);
 				const GPUResource* res_density[] = {
 					&aliveList[0], // CURRENT alivelist
-					&counterBuffer,
 					&particleBuffer,
-					&sphPartitionCellIndices,
-					&sphPartitionCellOffsets,
+					&sphParticleCells,
+					&sphGridCells,
 				};
 				device->BindResources(res_density, 0, arraysize(res_density), cmd);
 				const GPUResource* uav_density[] = {
+					&counterBuffer,
 					&densityBuffer
 				};
 				device->BindUAVs(uav_density, 0, arraysize(uav_density), cmd);
@@ -569,13 +622,13 @@ namespace wi
 				device->BindComputeShader(&sphforceCS, cmd);
 				const GPUResource* res_force[] = {
 					&aliveList[0], // CURRENT alivelist
-					&counterBuffer,
 					&densityBuffer,
-					&sphPartitionCellIndices,
-					&sphPartitionCellOffsets,
+					&sphParticleCells,
+					&sphGridCells,
 				};
 				device->BindResources(res_force, 0, arraysize(res_force), cmd);
 				const GPUResource* uav_force[] = {
+					&counterBuffer,
 					&particleBuffer,
 				};
 				device->BindUAVs(uav_force, 0, arraysize(uav_force), cmd);
@@ -590,7 +643,20 @@ namespace wi
 			}
 
 			device->EventBegin("Simulate", cmd);
-			device->BindUAVs(uavs, 0, arraysize(uavs), cmd);
+
+			device->BindUAV(&particleBuffer, 0, cmd);
+			device->BindUAV(&aliveList[0], 1, cmd);
+			device->BindUAV(&aliveList[1], 2, cmd);
+			device->BindUAV(&deadList, 3, cmd);
+			device->BindUAV(&counterBuffer, 4, cmd);
+			device->BindUAV(&indirectBuffers, 5, cmd);
+			device->BindUAV(&distanceBuffer, 6, cmd);
+			device->BindUAV(&generalBuffer, 7, cmd, vb_pos.subresource_uav);
+			device->BindUAV(&generalBuffer, 8, cmd, vb_nor.subresource_uav);
+			device->BindUAV(&generalBuffer, 9, cmd, vb_uvs.subresource_uav);
+			device->BindUAV(&generalBuffer, 10, cmd, vb_col.subresource_uav);
+			device->BindUAV(&culledIndirectionBuffer, 11, cmd);
+			device->BindUAV(&culledIndirectionBuffer2, 12, cmd);
 
 			// update CURRENT alive list, write NEW alive list
 			if (IsSorted())
@@ -633,7 +699,7 @@ namespace wi
 			wi::gpusortlib::Sort(MAX_PARTICLES, distanceBuffer, counterBuffer, PARTICLECOUNTER_OFFSET_CULLEDCOUNT, culledIndirectionBuffer, cmd);
 		}
 
-		if (!IsPaused())
+		if (!IsPaused() && dt > 0)
 		{
 			// finish updating, update draw argument buffer:
 			device->EventBegin("FinishUpdate", cmd);
@@ -672,7 +738,8 @@ namespace wi
 		}
 
 		// Statistics is copied to readback:
-		device->CopyResource(&statisticsReadbackBuffer[(statisticsReadBackIndex - 1) % arraysize(statisticsReadbackBuffer)], &counterBuffer, cmd);
+		const uint32_t oldest_stat_index = wi::graphics::GetDevice()->GetBufferIndex();
+		device->CopyResource(&statisticsReadbackBuffer[oldest_stat_index], &counterBuffer, cmd);
 
 		{
 			const GPUBarrier barriers[] = {
@@ -680,9 +747,7 @@ namespace wi
 				GPUBarrier::Buffer(&counterBuffer, ResourceState::COPY_SRC, ResourceState::SHADER_RESOURCE),
 				GPUBarrier::Buffer(&particleBuffer, ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE),
 				GPUBarrier::Buffer(&aliveList[1], ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE),
-				GPUBarrier::Buffer(&vertexBuffer_POS, ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE),
-				GPUBarrier::Buffer(&vertexBuffer_UVS, ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE),
-				GPUBarrier::Buffer(&vertexBuffer_COL, ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE),
+				GPUBarrier::Buffer(&generalBuffer, ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE),
 				GPUBarrier::Buffer(&culledIndirectionBuffer, ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE_COMPUTE),
 				GPUBarrier::Buffer(&culledIndirectionBuffer2, ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE_COMPUTE),
 			};
@@ -755,8 +820,8 @@ namespace wi
 			wi::renderer::LoadShader(ShaderStage::CS, emitCS_VOLUME, "emittedparticle_emitCS_volume.cso");
 			wi::renderer::LoadShader(ShaderStage::CS, emitCS_FROMMESH, "emittedparticle_emitCS_FROMMESH.cso");
 			wi::renderer::LoadShader(ShaderStage::CS, sphpartitionCS, "emittedparticle_sphpartitionCS.cso");
-			wi::renderer::LoadShader(ShaderStage::CS, sphpartitionoffsetsCS, "emittedparticle_sphpartitionoffsetsCS.cso");
-			wi::renderer::LoadShader(ShaderStage::CS, sphpartitionoffsetsresetCS, "emittedparticle_sphpartitionoffsetsresetCS.cso");
+			wi::renderer::LoadShader(ShaderStage::CS, sphcellallocationCS, "emittedparticle_sphcellallocationCS.cso");
+			wi::renderer::LoadShader(ShaderStage::CS, sphbinningCS, "emittedparticle_sphbinningCS.cso");
 			wi::renderer::LoadShader(ShaderStage::CS, sphdensityCS, "emittedparticle_sphdensityCS.cso");
 			wi::renderer::LoadShader(ShaderStage::CS, sphforceCS, "emittedparticle_sphforceCS.cso");
 			wi::renderer::LoadShader(ShaderStage::CS, simulateCS, "emittedparticle_simulateCS.cso");

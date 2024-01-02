@@ -5,13 +5,24 @@
 //#define DISABLE_ENVMAPS
 //#define DISABLE_SOFT_SHADOWMAP
 //#define DISABLE_TRANSPARENT_SHADOWMAP
+
+#ifdef PLANARREFLECTION
+#define DISABLE_ENVMAPS
+#define DISABLE_VOXELGI
+#endif // PLANARREFLECTION
+
 #include "globals.hlsli"
 #include "ShaderInterop_Renderer.h"
 #include "raytracingHF.hlsli"
 #include "brdf.hlsli"
-#include "objectHF.hlsli"
+#include "shadingHF.hlsli"
 
-ConstantBuffer<ShaderTypeBin> bin : register(b10);
+struct VisibilityPushConstants
+{
+	uint global_tile_offset;
+};
+PUSHCONSTANT(push, VisibilityPushConstants);
+
 StructuredBuffer<VisibilityTile> binned_tiles : register(t0);
 Texture2D<uint4> input_payload_0 : register(t2);
 Texture2D<uint4> input_payload_1 : register(t3);
@@ -21,7 +32,7 @@ RWTexture2D<float4> output : register(u0);
 [numthreads(VISIBILITY_BLOCKSIZE, VISIBILITY_BLOCKSIZE, 1)]
 void main(uint Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 {
-	const uint tile_offset = bin.offset + Gid.x;
+	const uint tile_offset = push.global_tile_offset + Gid.x;
 	VisibilityTile tile = binned_tiles[tile_offset];
 	[branch] if (!tile.check_thread_valid(groupIndex)) return;
 	const uint2 GTid = remap_lane_8x8(groupIndex);
@@ -49,10 +60,10 @@ void main(uint Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 	// Unpack primary payload:
 	uint4 payload_0 = input_payload_0[pixel];
 	float4 data0 = unpack_rgba(payload_0.x);
-	surface.albedo = DEGAMMA(data0.rgb);
+	surface.albedo = RemoveSRGBCurve_Fast(data0.rgb);
 	surface.occlusion = data0.a;
 	float4 data1 = unpack_rgba(payload_0.y);
-	surface.f0 = DEGAMMA(data1.rgb);
+	surface.f0 = RemoveSRGBCurve_Fast(data1.rgb);
 	surface.roughness = data1.a;
 	surface.N = decode_oct(unpack_half2(payload_0.z));
 	surface.emissiveColor = Unpack_R11G11B10_FLOAT(payload_0.w);
@@ -112,7 +123,7 @@ void main(uint Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 
 	ApplyLighting(surface, lighting, color);
 
-	ApplyFog(surface.hit_depth, GetCamera().position, surface.V, color);
+	ApplyFog(surface.hit_depth, surface.V, color);
 
 	color = clamp(color, 0, 65000);
 

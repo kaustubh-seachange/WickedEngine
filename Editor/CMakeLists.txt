@@ -24,6 +24,7 @@ set (SOURCE_FILES
 	PaintToolWindow.cpp
 	GraphicsWindow.cpp
 	SoundWindow.cpp
+	VideoWindow.cpp
 	SpringWindow.cpp
 	ScriptWindow.cpp
 	stdafx.cpp
@@ -40,7 +41,12 @@ set (SOURCE_FILES
 	ComponentsWindow.cpp
 	TerrainWindow.cpp
 	HumanoidWindow.cpp
+	GeneralWindow.cpp
+	ProfilerWindow.cpp
+	SpriteWindow.cpp
+	FontWindow.cpp
 	xatlas.cpp
+	EmbeddedResources.cpp
 )
 
 add_subdirectory(meshoptimizer)
@@ -74,9 +80,10 @@ endif ()
 add_custom_command(
 	TARGET WickedEngineEditor POST_BUILD
 	# Copy shader compiler library in the source folder
-	COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/WickedEngine/${LIB_DXCOMPILER} ${CMAKE_CURRENT_BINARY_DIR}
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/images ${CMAKE_CURRENT_BINARY_DIR}/images
+	COMMAND ${CMAKE_COMMAND} -E copy_if_different ${WICKED_ROOT_DIR}/WickedEngine/${LIB_DXCOMPILER} ${CMAKE_CURRENT_BINARY_DIR}
 	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/terrain ${CMAKE_CURRENT_BINARY_DIR}/terrain
+	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/languages ${CMAKE_CURRENT_BINARY_DIR}/languages
+	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/fonts ${CMAKE_CURRENT_BINARY_DIR}/fonts
 )
 
 include(GNUInstallDirs)
@@ -93,21 +100,22 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/wicked-engine.sh"
 install(TARGETS WickedEngineEditor RUNTIME DESTINATION ${EDITOR_INSTALL_FOLDER})
 
 # install editor assets
-# mandatory images and terrain folders
+# mandatory terrain folder
 install(DIRECTORY
-		"${CMAKE_CURRENT_SOURCE_DIR}/images"
 		"${CMAKE_CURRENT_SOURCE_DIR}/terrain"
+		"${CMAKE_CURRENT_SOURCE_DIR}/languages"
+		"${CMAKE_CURRENT_SOURCE_DIR}/fonts"
 		DESTINATION ${EDITOR_INSTALL_FOLDER})
 # optional .ini .ico .lua
 install(FILES
 		${CMAKE_CURRENT_SOURCE_DIR}/config.ini
-		${CMAKE_CURRENT_SOURCE_DIR}/Editor.ico
+		${CMAKE_CURRENT_SOURCE_DIR}/wicked.ico
 		${CMAKE_CURRENT_SOURCE_DIR}/startup.lua
 		DESTINATION ${EDITOR_INSTALL_FOLDER})
 
 # Installing icon and application "shortcut" on Linux
 if (UNIX)
-	install(FILES ${CMAKE_SOURCE_DIR}/Content/logo_small.png
+	install(FILES ${WICKED_ROOT_DIR}/Content/logo_small.png
 			RENAME wicked.png
 			DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/")
 

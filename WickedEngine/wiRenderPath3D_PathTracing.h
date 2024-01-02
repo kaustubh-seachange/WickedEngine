@@ -12,6 +12,8 @@ namespace wi
 		int sam = -1;
 		int target = 1024;
 		wi::graphics::Texture traceResult;
+		wi::graphics::Texture traceDepth;
+		wi::graphics::Texture traceStencil;
 
 		wi::vector<uint8_t> texturedata_src;
 		wi::vector<uint8_t> texturedata_dst;
@@ -22,12 +24,9 @@ namespace wi
 		wi::graphics::Texture denoiserResult;
 		wi::jobsystem::context denoiserContext;
 
-		wi::graphics::RenderPass renderpass_debugbvh;
-
 		void ResizeBuffers() override;
 
 	public:
-		const wi::graphics::Texture* GetDepthStencil() const override { return nullptr; };
 
 		void Update(float dt) override;
 		void Render() const override;

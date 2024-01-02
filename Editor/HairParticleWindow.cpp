@@ -1,6 +1,5 @@
 #include "stdafx.h"
 #include "HairParticleWindow.h"
-#include "Editor.h"
 
 using namespace wi::ecs;
 using namespace wi::scene;
@@ -279,7 +278,8 @@ void HairParticleWindow::UpdateData()
 
 	std::string ss;
 	ss += "To use hair particle system, first you must select a surface mesh to spawn particles on.\n\n";
-	ss += "Memory usage: " + std::to_string(hair->GetMemorySizeInBytes() / 1024.0f / 1024.0f) + " MB\n";
+	ss += "Position format: " + std::string(wi::graphics::GetFormatString(hair->position_format)) + "\n";
+	ss += "Memory usage: " + wi::helper::GetMemorySizeText(hair->GetMemorySizeInBytes()) + "\n";
 	infoLabel.SetText(ss);
 
 	meshComboBox.ClearItems();

@@ -52,6 +52,7 @@ int sdl_loop(Editor &editor)
                                     }
                                     }).detach();
                             }
+							editor.renderComponent.ReloadLanguage();
                             break;
                         default:
                             break;
@@ -160,6 +161,5 @@ int main(int argc, char *argv[])
 
     int ret = sdl_loop(editor);
 
-    SDL_Quit();
     return ret;
 }

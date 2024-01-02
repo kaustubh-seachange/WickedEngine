@@ -4,10 +4,11 @@
 #include "wiEventHandler.h"
 #include "wiMath.h"
 
+#include "Utility/lodepng.h"
+#include "Utility/dds_write.h"
 #include "Utility/stb_image_write.h"
 #include "Utility/basis_universal/encoder/basisu_comp.h"
 #include "Utility/basis_universal/encoder/basisu_gpu_texture.h"
-extern basist::etc1_global_selector_codebook g_basis_global_codebook;
 
 #include <thread>
 #include <locale>
@@ -18,9 +19,12 @@ extern basist::etc1_global_selector_codebook g_basis_global_codebook;
 #include <codecvt> // string conversion
 #include <filesystem>
 #include <vector>
+#include <iostream>
+#include <cstdlib>
 
-#ifdef _WIN32
+#if defined(_WIN32)
 #include <direct.h>
+#include <Psapi.h> // GetProcessMemoryInfo
 #ifdef PLATFORM_UWP
 #include <winrt/Windows.UI.Popups.h>
 #include <winrt/Windows.Storage.h>
@@ -34,10 +38,10 @@ extern basist::etc1_global_selector_codebook g_basis_global_codebook;
 #include <Commdlg.h> // openfile
 #include <WinBase.h>
 #endif // PLATFORM_UWP
+#elif defined(PLATFORM_PS5)
 #else
 #include "Utility/portable-file-dialogs.h"
 #endif // _WIN32
-
 
 namespace wi::helper
 {
@@ -65,24 +69,26 @@ namespace wi::helper
 
 	void messageBox(const std::string& msg, const std::string& caption)
 	{
-#ifdef _WIN32
-#ifndef PLATFORM_UWP
+#ifdef PLATFORM_WINDOWS_DESKTOP
 		MessageBoxA(GetActiveWindow(), msg.c_str(), caption.c_str(), 0);
-#else
+#endif // PLATFORM_WINDOWS_DESKTOP
+
+#ifdef PLATFORM_UWP
 		std::wstring wmessage, wcaption;
 		StringConvert(msg, wmessage);
 		StringConvert(caption, wcaption);
 		// UWP can only show message box on main thread:
 		wi::eventhandler::Subscribe_Once(wi::eventhandler::EVENT_THREAD_SAFE_POINT, [=](uint64_t userdata) {
 			winrt::Windows::UI::Popups::MessageDialog(wmessage, wcaption).ShowAsync();
-		});
+			});
 #endif // PLATFORM_UWP
-#elif SDL2
+
+#ifdef SDL2
 		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, caption.c_str(), msg.c_str(), NULL);
-#endif // _WIN32
+#endif // SDL2
 	}
 
-	void screenshot(const wi::graphics::SwapChain& swapchain, const std::string& name)
+	std::string screenshot(const wi::graphics::SwapChain& swapchain, const std::string& name)
 	{
 		std::string directory;
 		if (name.empty())
@@ -94,13 +100,13 @@ namespace wi::helper
 			directory = GetDirectoryFromPath(name);
 		}
 
-		if(!directory.empty()) //PE: Crash if only filename is used with no folder.
+		if (!directory.empty()) //PE: Crash if only filename is used with no folder.
 			DirectoryCreate(directory);
 
 		std::string filename = name;
 		if (filename.empty())
 		{
-			filename = directory + "/sc_" + getCurrentDateTimeAsString() + ".jpg";
+			filename = directory + "/sc_" + getCurrentDateTimeAsString() + ".png";
 		}
 
 		bool result = saveTextureToFile(wi::graphics::GetDevice()->GetBackBuffer(&swapchain), filename);
@@ -108,8 +114,9 @@ namespace wi::helper
 
 		if (result)
 		{
-			wi::backlog::post("Screenshot saved: " + filename);
+			return filename;
 		}
+		return "";
 	}
 
 	bool saveTextureToMemory(const wi::graphics::Texture& texture, wi::vector<uint8_t>& texturedata)
@@ -181,7 +188,7 @@ namespace wi::helper
 							std::memcpy(
 								dst_slice + i * dst_rowpitch,
 								src_slice + i * subresourcedata.row_pitch,
-								subresourcedata.row_pitch
+								dst_rowpitch
 							);
 						}
 						cpy_offset += mip_height * dst_rowpitch;
@@ -218,6 +225,256 @@ namespace wi::helper
 		using namespace wi::graphics;
 		const uint32_t data_stride = GetFormatStride(desc.format);
 
+		std::string extension = wi::helper::toUpper(fileExtension);
+
+		if (extension.compare("DDS") == 0)
+		{
+			filedata.resize(sizeof(dds_write::Header) + texturedata.size());
+			dds_write::DXGI_FORMAT dds_format = dds_write::DXGI_FORMAT_UNKNOWN;
+			switch (desc.format)
+			{
+			case wi::graphics::Format::R32G32B32A32_FLOAT:
+				dds_format = dds_write::DXGI_FORMAT_R32G32B32A32_FLOAT;
+				break;
+			case wi::graphics::Format::R32G32B32A32_UINT:
+				dds_format = dds_write::DXGI_FORMAT_R32G32B32A32_UINT;
+				break;
+			case wi::graphics::Format::R32G32B32A32_SINT:
+				dds_format = dds_write::DXGI_FORMAT_R32G32B32A32_SINT;
+				break;
+			case wi::graphics::Format::R32G32B32_FLOAT:
+				dds_format = dds_write::DXGI_FORMAT_R32G32B32_FLOAT;
+				break;
+			case wi::graphics::Format::R32G32B32_UINT:
+				dds_format = dds_write::DXGI_FORMAT_R32G32B32_UINT;
+				break;
+			case wi::graphics::Format::R32G32B32_SINT:
+				dds_format = dds_write::DXGI_FORMAT_R32G32B32_SINT;
+				break;
+			case wi::graphics::Format::R16G16B16A16_FLOAT:
+				dds_format = dds_write::DXGI_FORMAT_R16G16B16A16_FLOAT;
+				break;
+			case wi::graphics::Format::R16G16B16A16_UNORM:
+				dds_format = dds_write::DXGI_FORMAT_R16G16B16A16_UNORM;
+				break;
+			case wi::graphics::Format::R16G16B16A16_UINT:
+				dds_format = dds_write::DXGI_FORMAT_R16G16B16A16_UINT;
+				break;
+			case wi::graphics::Format::R16G16B16A16_SNORM:
+				dds_format = dds_write::DXGI_FORMAT_R16G16B16A16_SNORM;
+				break;
+			case wi::graphics::Format::R16G16B16A16_SINT:
+				dds_format = dds_write::DXGI_FORMAT_R16G16B16A16_SINT;
+				break;
+			case wi::graphics::Format::R32G32_FLOAT:
+				dds_format = dds_write::DXGI_FORMAT_R32G32_FLOAT;
+				break;
+			case wi::graphics::Format::R32G32_UINT:
+				dds_format = dds_write::DXGI_FORMAT_R32G32_UINT;
+				break;
+			case wi::graphics::Format::R32G32_SINT:
+				dds_format = dds_write::DXGI_FORMAT_R32G32_SINT;
+				break;
+			case wi::graphics::Format::R10G10B10A2_UNORM:
+				dds_format = dds_write::DXGI_FORMAT_R10G10B10A2_UNORM;
+				break;
+			case wi::graphics::Format::R10G10B10A2_UINT:
+				dds_format = dds_write::DXGI_FORMAT_R10G10B10A2_UINT;
+				break;
+			case wi::graphics::Format::R11G11B10_FLOAT:
+				dds_format = dds_write::DXGI_FORMAT_R11G11B10_FLOAT;
+				break;
+			case wi::graphics::Format::R8G8B8A8_UNORM:
+				dds_format = dds_write::DXGI_FORMAT_R8G8B8A8_UNORM;
+				break;
+			case wi::graphics::Format::R8G8B8A8_UNORM_SRGB:
+				dds_format = dds_write::DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+				break;
+			case wi::graphics::Format::R8G8B8A8_UINT:
+				dds_format = dds_write::DXGI_FORMAT_R8G8B8A8_UINT;
+				break;
+			case wi::graphics::Format::R8G8B8A8_SNORM:
+				dds_format = dds_write::DXGI_FORMAT_R8G8B8A8_SNORM;
+				break;
+			case wi::graphics::Format::R8G8B8A8_SINT:
+				dds_format = dds_write::DXGI_FORMAT_R8G8B8A8_SINT;
+				break;
+			case wi::graphics::Format::B8G8R8A8_UNORM:
+				dds_format = dds_write::DXGI_FORMAT_B8G8R8A8_UNORM;
+				break;
+			case wi::graphics::Format::B8G8R8A8_UNORM_SRGB:
+				dds_format = dds_write::DXGI_FORMAT_R16G16_SINT;
+				break;
+			case wi::graphics::Format::R16G16_FLOAT:
+				dds_format = dds_write::DXGI_FORMAT_R16G16_FLOAT;
+				break;
+			case wi::graphics::Format::R16G16_UNORM:
+				dds_format = dds_write::DXGI_FORMAT_R16G16_UNORM;
+				break;
+			case wi::graphics::Format::R16G16_UINT:
+				dds_format = dds_write::DXGI_FORMAT_R16G16_UINT;
+				break;
+			case wi::graphics::Format::R16G16_SNORM:
+				dds_format = dds_write::DXGI_FORMAT_R16G16_SNORM;
+				break;
+			case wi::graphics::Format::R16G16_SINT:
+				dds_format = dds_write::DXGI_FORMAT_R16G16_SINT;
+				break;
+			case wi::graphics::Format::D32_FLOAT:
+			case wi::graphics::Format::R32_FLOAT:
+				dds_format = dds_write::DXGI_FORMAT_R32_FLOAT;
+				break;
+			case wi::graphics::Format::R32_UINT:
+				dds_format = dds_write::DXGI_FORMAT_R32_UINT;
+				break;
+			case wi::graphics::Format::R32_SINT:
+				dds_format = dds_write::DXGI_FORMAT_R32_SINT;
+				break;
+			case wi::graphics::Format::R9G9B9E5_SHAREDEXP:
+				dds_format = dds_write::DXGI_FORMAT_R9G9B9E5_SHAREDEXP;
+				break;
+			case wi::graphics::Format::R8G8_UNORM:
+				dds_format = dds_write::DXGI_FORMAT_R8G8_UNORM;
+				break;
+			case wi::graphics::Format::R8G8_UINT:
+				dds_format = dds_write::DXGI_FORMAT_R8G8_UINT;
+				break;
+			case wi::graphics::Format::R8G8_SNORM:
+				dds_format = dds_write::DXGI_FORMAT_R8G8_SNORM;
+				break;
+			case wi::graphics::Format::R8G8_SINT:
+				dds_format = dds_write::DXGI_FORMAT_R8G8_SINT;
+				break;
+			case wi::graphics::Format::R16_FLOAT:
+				dds_format = dds_write::DXGI_FORMAT_R16_FLOAT;
+				break;
+			case wi::graphics::Format::D16_UNORM:
+			case wi::graphics::Format::R16_UNORM:
+				dds_format = dds_write::DXGI_FORMAT_R16_UNORM;
+				break;
+			case wi::graphics::Format::R16_UINT:
+				dds_format = dds_write::DXGI_FORMAT_R16_UINT;
+				break;
+			case wi::graphics::Format::R16_SNORM:
+				dds_format = dds_write::DXGI_FORMAT_R16_SNORM;
+				break;
+			case wi::graphics::Format::R16_SINT:
+				dds_format = dds_write::DXGI_FORMAT_R16_SINT;
+				break;
+			case wi::graphics::Format::R8_UNORM:
+				dds_format = dds_write::DXGI_FORMAT_R8_UNORM;
+				break;
+			case wi::graphics::Format::R8_UINT:
+				dds_format = dds_write::DXGI_FORMAT_R8_UINT;
+				break;
+			case wi::graphics::Format::R8_SNORM:
+				dds_format = dds_write::DXGI_FORMAT_R8_SNORM;
+				break;
+			case wi::graphics::Format::R8_SINT:
+				dds_format = dds_write::DXGI_FORMAT_R8_SINT;
+				break;
+			case wi::graphics::Format::BC1_UNORM:
+				dds_format = dds_write::DXGI_FORMAT_BC1_UNORM;
+				break;
+			case wi::graphics::Format::BC1_UNORM_SRGB:
+				dds_format = dds_write::DXGI_FORMAT_BC1_UNORM_SRGB;
+				break;
+			case wi::graphics::Format::BC2_UNORM:
+				dds_format = dds_write::DXGI_FORMAT_BC2_UNORM;
+				break;
+			case wi::graphics::Format::BC2_UNORM_SRGB:
+				dds_format = dds_write::DXGI_FORMAT_BC2_UNORM_SRGB;
+				break;
+			case wi::graphics::Format::BC3_UNORM:
+				dds_format = dds_write::DXGI_FORMAT_BC3_UNORM;
+				break;
+			case wi::graphics::Format::BC3_UNORM_SRGB:
+				dds_format = dds_write::DXGI_FORMAT_BC3_UNORM_SRGB;
+				break;
+			case wi::graphics::Format::BC4_UNORM:
+				dds_format = dds_write::DXGI_FORMAT_BC4_UNORM;
+				break;
+			case wi::graphics::Format::BC4_SNORM:
+				dds_format = dds_write::DXGI_FORMAT_BC4_SNORM;
+				break;
+			case wi::graphics::Format::BC5_UNORM:
+				dds_format = dds_write::DXGI_FORMAT_BC5_UNORM;
+				break;
+			case wi::graphics::Format::BC5_SNORM:
+				dds_format = dds_write::DXGI_FORMAT_BC5_SNORM;
+				break;
+			case wi::graphics::Format::BC6H_UF16:
+				dds_format = dds_write::DXGI_FORMAT_BC6H_UF16;
+				break;
+			case wi::graphics::Format::BC6H_SF16:
+				dds_format = dds_write::DXGI_FORMAT_BC6H_SF16;
+				break;
+			case wi::graphics::Format::BC7_UNORM:
+				dds_format = dds_write::DXGI_FORMAT_BC7_UNORM;
+				break;
+			case wi::graphics::Format::BC7_UNORM_SRGB:
+				dds_format = dds_write::DXGI_FORMAT_BC7_UNORM_SRGB;
+				break;
+			default:
+				assert(0);
+				return false;
+			}
+			dds_write::write_header(
+				filedata.data(),
+				dds_format,
+				desc.width,
+				desc.type == TextureDesc::Type::TEXTURE_1D ? 0 : desc.height,
+				desc.mip_levels,
+				desc.array_size,
+				has_flag(desc.misc_flags, ResourceMiscFlag::TEXTURECUBE),
+				desc.type == TextureDesc::Type::TEXTURE_3D ? desc.depth : 0
+			);
+			std::memcpy(filedata.data() + sizeof(dds_write::Header), texturedata.data(), texturedata.size());
+			return true;
+		}
+
+		const bool is_png = extension.compare("PNG") == 0;
+
+		if (is_png)
+		{
+			if (desc.format == Format::R16_UNORM || desc.format == Format::R16_UINT)
+			{
+				// Specialized handling for 16-bit single channel PNG:
+				wi::vector<uint8_t> src_bigendian = texturedata;
+				uint16_t* dest = (uint16_t*)src_bigendian.data();
+				for (uint32_t i = 0; i < desc.width * desc.height; ++i)
+				{
+					uint16_t r = dest[i];
+					r = (r >> 8) | ((r & 0xFF) << 8); // little endian to big endian
+					dest[i] = r;
+				}
+				unsigned error = lodepng::encode(filedata, src_bigendian, desc.width, desc.height, LCT_GREY, 16);
+				return error == 0;
+			}
+			if (desc.format == Format::R16G16B16A16_UNORM || desc.format == Format::R16G16B16A16_UINT)
+			{
+				// Specialized handling for 16-bit PNG:
+				wi::vector<uint8_t> src_bigendian = texturedata;
+				wi::Color16* dest = (wi::Color16*)src_bigendian.data();
+				for (uint32_t i = 0; i < desc.width * desc.height; ++i)
+				{
+					wi::Color16 rgba = dest[i];
+					uint16_t r = rgba.getR();
+					r = (r >> 8) | ((r & 0xFF) << 8); // little endian to big endian
+					uint16_t g = rgba.getG();
+					g = (g >> 8) | ((g & 0xFF) << 8); // little endian to big endian
+					uint16_t b = rgba.getB();
+					b = (b >> 8) | ((b & 0xFF) << 8); // little endian to big endian
+					uint16_t a = rgba.getA();
+					a = (a >> 8) | ((a & 0xFF) << 8); // little endian to big endian
+					rgba = wi::Color16(r, g, b, a);
+					dest[i] = rgba;
+				}
+				unsigned error = lodepng::encode(filedata, src_bigendian, desc.width, desc.height, LCT_RGBA, 16);
+				return error == 0;
+			}
+		}
+
 		struct MipDesc
 		{
 			const uint8_t* address = nullptr;
@@ -245,7 +502,6 @@ namespace wi::helper
 			mip_depth = std::max(1u, mip_depth / 2);
 		}
 
-		std::string extension = wi::helper::toUpper(fileExtension);
 		bool basis = !extension.compare("BASIS");
 		bool ktx2 = !extension.compare("KTX2");
 		basisu::image basis_image;
@@ -320,6 +576,18 @@ namespace wi::helper
 				data32[i] = rgba8;
 			}
 		}
+		else if (desc.format == Format::R16G16B16A16_UNORM || desc.format == Format::R16G16B16A16_UINT)
+		{
+			// This will be converted first to rgba8 before saving to common format:
+			wi::Color16* dataSrc = (wi::Color16*)texturedata.data();
+			wi::Color* data32 = (wi::Color*)texturedata.data();
+
+			for (uint32_t i = 0; i < data_count; ++i)
+			{
+				wi::Color16 pixel16 = dataSrc[i];
+				data32[i] = wi::Color::fromFloat4(pixel16.toFloat4());
+			}
+		}
 		else if (desc.format == Format::R11G11B10_FLOAT)
 		{
 			// This will be converted first to rgba8 before saving to common format:
@@ -344,6 +612,47 @@ namespace wi::helper
 				rgba8 |= (uint32_t)(a * 255.0f) << 24;
 
 				data32[i] = rgba8;
+			}
+		}
+		else if (desc.format == Format::R9G9B9E5_SHAREDEXP)
+		{
+			// This will be converted first to rgba8 before saving to common format:
+			XMFLOAT3SE* dataSrc = (XMFLOAT3SE*)texturedata.data();
+			uint32_t* data32 = (uint32_t*)texturedata.data();
+
+			for (uint32_t i = 0; i < data_count; ++i)
+			{
+				XMFLOAT3SE pixel = dataSrc[i];
+				XMVECTOR V = XMLoadFloat3SE(&pixel);
+				XMFLOAT3 pixel3;
+				XMStoreFloat3(&pixel3, V);
+				float r = std::max(0.0f, std::min(pixel3.x, 1.0f));
+				float g = std::max(0.0f, std::min(pixel3.y, 1.0f));
+				float b = std::max(0.0f, std::min(pixel3.z, 1.0f));
+				float a = 1;
+
+				uint32_t rgba8 = 0;
+				rgba8 |= (uint32_t)(r * 255.0f) << 0;
+				rgba8 |= (uint32_t)(g * 255.0f) << 8;
+				rgba8 |= (uint32_t)(b * 255.0f) << 16;
+				rgba8 |= (uint32_t)(a * 255.0f) << 24;
+
+				data32[i] = rgba8;
+			}
+		}
+		else if (desc.format == Format::B8G8R8A8_UNORM || desc.format == Format::B8G8R8A8_UNORM_SRGB)
+		{
+			// This will be converted first to rgba8 before saving to common format:
+			uint32_t* data32 = (uint32_t*)texturedata.data();
+
+			for (uint32_t i = 0; i < data_count; ++i)
+			{
+				uint32_t pixel = data32[i];
+				uint8_t b = (pixel >> 0u) & 0xFF;
+				uint8_t g = (pixel >> 8u) & 0xFF;
+				uint8_t r = (pixel >> 16u) & 0xFF;
+				uint8_t a = (pixel >> 24u) & 0xFF;
+				data32[i] = r | (g << 8u) | (b << 16u) | (a << 24u);
 			}
 		}
 		else if (desc.format == Format::R8_UNORM)
@@ -390,7 +699,7 @@ namespace wi::helper
 		}
 		else
 		{
-			assert(desc.format == Format::R8G8B8A8_UNORM); // If you need to save other texture format, implement data conversion for it
+			assert(desc.format == Format::R8G8B8A8_UNORM || desc.format == Format::R8G8B8A8_UNORM_SRGB); // If you need to save other texture format, implement data conversion for it
 		}
 
 		if (basis || ktx2)
@@ -409,6 +718,12 @@ namespace wi::helper
 						basis_mipmaps.push_back(basis_mip);
 					}
 				}
+			}
+			static bool encoder_initialized = false;
+			if (!encoder_initialized)
+			{
+				encoder_initialized = true;
+				basisu::basisu_encoder_init(false, false);
 			}
 			basisu::basis_compressor_params params;
 			params.m_source_images.push_back(basis_image);
@@ -433,7 +748,6 @@ namespace wi::helper
 			//	instead we provide mipmap data that was downloaded from the GPU with m_source_mipmap_images.
 			//	This is better, because engine specific mipgen options will be retained, such as coverage preserving mipmaps
 			params.m_mip_gen = false;
-			params.m_pSel_codebook = &g_basis_global_codebook;
 			params.m_quality_level = basisu::BASISU_QUALITY_MAX;
 			params.m_multithreading = true;
 			int num_threads = std::max(1u, std::thread::hardware_concurrency());
@@ -480,22 +794,16 @@ namespace wi::helper
 			}
 		};
 
-		const void* src_data = texturedata.data();
-		if (basis_image.get_width() > 0 && basis_image.get_ptr() != nullptr)
-		{
-			src_data = basis_image.get_ptr();
-		}
-
 		static int mip_request = 0; // you can use this while debugging to write specific mip level to file (todo: option param?)
 		const MipDesc& mip = mips[mip_request];
 
-		if (!extension.compare("JPG") || !extension.compare("JPEG"))
-		{
-			write_result = stbi_write_jpg_to_func(func, &filedata, (int)mip.width, (int)mip.height, dst_channel_count, mip.address, 100);
-		}
-		else if (!extension.compare("PNG"))
+		if (is_png)
 		{
 			write_result = stbi_write_png_to_func(func, &filedata, (int)mip.width, (int)mip.height, dst_channel_count, mip.address, 0);
+		}
+		else if (!extension.compare("JPG") || !extension.compare("JPEG"))
+		{
+			write_result = stbi_write_jpg_to_func(func, &filedata, (int)mip.width, (int)mip.height, dst_channel_count, mip.address, 100);
 		}
 		else if (!extension.compare("TGA"))
 		{
@@ -636,6 +944,25 @@ namespace wi::helper
 		return filename.substr(0, idx);
 	}
 
+#ifdef _WIN32
+	// On windows we need to expand UTF8 strings to UTF16 when passing it to WinAPI:
+	std::wstring ToNativeString(const std::string& fileName)
+	{
+		std::wstring fileName_wide;
+		StringConvert(fileName, fileName_wide);
+		return fileName_wide;
+	}
+#else
+#define ToNativeString(x) (x)
+#endif // _WIN32
+
+	std::string GetPathRelative(const std::string& rootdir, std::string& path)
+	{
+		std::string ret = path;
+		MakePathRelative(rootdir, ret);
+		return ret;
+	}
+
 	void MakePathRelative(const std::string& rootdir, std::string& path)
 	{
 		if (rootdir.empty() || path.empty())
@@ -653,14 +980,14 @@ namespace wi::helper
 
 #else
 
-		std::filesystem::path filepath = path;
+		std::filesystem::path filepath = ToNativeString(path);
 		if (filepath.is_absolute())
 		{
-			std::filesystem::path rootpath = rootdir;
-			std::filesystem::path relative = std::filesystem::relative(path, rootdir);
+			std::filesystem::path rootpath = ToNativeString(rootdir);
+			std::filesystem::path relative = std::filesystem::relative(filepath, rootpath);
 			if (!relative.empty())
 			{
-				path = relative.string();
+				path = relative.generic_u8string();
 			}
 		}
 
@@ -670,30 +997,29 @@ namespace wi::helper
 
 	void MakePathAbsolute(std::string& path)
 	{
-		std::filesystem::path filepath = path;
-		std::filesystem::path absolute = std::filesystem::absolute(path);
+		std::filesystem::path absolute = std::filesystem::absolute(ToNativeString(path));
 		if (!absolute.empty())
 		{
-			path = absolute.string();
+			path = absolute.generic_u8string();
 		}
 	}
 
 	void DirectoryCreate(const std::string& path)
 	{
-		std::filesystem::create_directories(path);
+		std::filesystem::create_directories(ToNativeString(path));
 	}
 
 	template<template<typename T, typename A> typename vector_interface>
 	bool FileRead_Impl(const std::string& fileName, vector_interface<uint8_t, std::allocator<uint8_t>>& data)
 	{
 #ifndef PLATFORM_UWP
-#ifdef SDL_FILESYSTEM_UNIX
+#if defined(PLATFORM_LINUX) || defined(PLATFORM_PS5)
 		std::string filepath = fileName;
-		std::replace(filepath.begin(), filepath.end(), '\\', '/');
+		std::replace(filepath.begin(), filepath.end(), '\\', '/'); // Linux cannot handle backslash in file path, need to convert it to forward slash
 		std::ifstream file(filepath, std::ios::binary | std::ios::ate);
 #else
-		std::ifstream file(fileName, std::ios::binary | std::ios::ate);
-#endif // SDL_FILESYSTEM_UNIX
+		std::ifstream file(ToNativeString(fileName), std::ios::binary | std::ios::ate);
+#endif // PLATFORM_LINUX || PLATFORM_PS5
 		if (file.is_open())
 		{
 			size_t dataSize = (size_t)file.tellg();
@@ -779,7 +1105,7 @@ namespace wi::helper
 		}
 
 #ifndef PLATFORM_UWP
-		std::ofstream file(fileName, std::ios::binary | std::ios::trunc);
+		std::ofstream file(ToNativeString(fileName), std::ios::binary | std::ios::trunc);
 		if (file.is_open())
 		{
 			file.write((const char*)data, (std::streamsize)size);
@@ -847,7 +1173,7 @@ namespace wi::helper
 	bool FileExists(const std::string& fileName)
 	{
 #ifndef PLATFORM_UWP
-		bool exists = std::filesystem::exists(fileName);
+		bool exists = std::filesystem::exists(ToNativeString(fileName));
 		return exists;
 #else
 		using namespace winrt::Windows::Storage;
@@ -892,28 +1218,60 @@ namespace wi::helper
 #endif // PLATFORM_UWP
 	}
 
+	uint64_t FileTimestamp(const std::string& fileName)
+	{
+		auto tim = std::filesystem::last_write_time(ToNativeString(fileName));
+		return std::chrono::duration_cast<std::chrono::duration<uint64_t>>(tim.time_since_epoch()).count();
+	}
+
 	std::string GetTempDirectoryPath()
 	{
+#if defined(PLATFORM_XBOX) || defined(PLATFORM_PS5)
+		return "";
+#else
 		auto path = std::filesystem::temp_directory_path();
-		return path.string();
+		return path.generic_u8string();
+#endif // PLATFORM_XBOX || PLATFORM_PS5
+	}
+
+	std::string GetCacheDirectoryPath()
+	{
+		#ifdef PLATFORM_LINUX
+			const char* xdg_cache = std::getenv("XDG_CACHE_HOME");
+			if (xdg_cache == nullptr || *xdg_cache == '\0') {
+				const char* home = std::getenv("HOME");
+				if (home != nullptr) {
+					return std::string(home) + "/.cache";
+				} else {
+					// shouldn't happen, just to be safe
+					return GetTempDirectoryPath();
+				}
+			} else {
+				return xdg_cache;
+			}
+		#else
+			return GetTempDirectoryPath();
+		#endif
 	}
 
 	std::string GetCurrentPath()
 	{
+#ifdef PLATFORM_PS5
+		return "/app0";
+#else
 		auto path = std::filesystem::current_path();
-		return path.string();
+		return path.generic_u8string();
+#endif // PLATFORM_PS5
 	}
 
 	void FileDialog(const FileDialogParams& params, std::function<void(std::string fileName)> onSuccess)
 	{
-#ifdef _WIN32
-#ifndef PLATFORM_UWP
-
+#ifdef PLATFORM_WINDOWS_DESKTOP
 		std::thread([=] {
 
-			char szFile[256];
+			wchar_t szFile[256];
 
-			OPENFILENAMEA ofn;
+			OPENFILENAME ofn;
 			ZeroMemory(&ofn, sizeof(ofn));
 			ofn.lStructSize = sizeof(ofn);
 			ofn.hwndOwner = nullptr;
@@ -932,7 +1290,7 @@ namespace wi::helper
 			//	Second string is extensions, each separated by ';' and at the end of all, a '\0'
 			//	Then the whole container string is closed with an other '\0'
 			//		For example: "model files\0*.model;*.obj;\0"  <-- this string literal has "model files" as description and two accepted extensions "model" and "obj"
-			wi::vector<char> filter;
+			wi::vector<wchar_t> filter;
 			filter.reserve(256);
 			{
 				for (auto& x : params.description)
@@ -963,23 +1321,26 @@ namespace wi::helper
 			case FileDialogParams::OPEN:
 				ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
 				ofn.Flags |= OFN_NOCHANGEDIR;
-				ok = GetOpenFileNameA(&ofn) == TRUE;
+				ok = GetOpenFileName(&ofn) == TRUE;
 				break;
 			case FileDialogParams::SAVE:
 				ofn.Flags = OFN_OVERWRITEPROMPT;
 				ofn.Flags |= OFN_NOCHANGEDIR;
-				ok = GetSaveFileNameA(&ofn) == TRUE;
+				ok = GetSaveFileName(&ofn) == TRUE;
 				break;
 			}
 
 			if (ok)
 			{
-				onSuccess(ofn.lpstrFile);
+				std::string result_filename;
+				StringConvert(ofn.lpstrFile, result_filename);
+				onSuccess(result_filename);
 			}
 
 			}).detach();
+#endif // PLATFORM_WINDOWS_DESKTOP
 
-#else
+#ifdef PLATFORM_UWP
 		auto filedialoghelper = [](FileDialogParams params, std::function<void(std::string fileName)> onSuccess) -> winrt::fire_and_forget {
 
 			using namespace winrt::Windows::Storage;
@@ -1054,7 +1415,7 @@ namespace wi::helper
 
 #endif // PLATFORM_UWP
 
-#else
+#ifdef PLATFORM_LINUX
 		if (!pfd::settings::available()) {
 			const char *message = "No dialog backend available";
 #ifdef SDL2
@@ -1105,7 +1466,23 @@ namespace wi::helper
 				break;
 			}
 		}
-#endif // _WIN32
+#endif // PLATFORM_LINUX
+	}
+
+	void GetFileNamesInDirectory(const std::string& directory, std::function<void(std::string fileName)> onSuccess, const std::string& filter_extension)
+	{
+		std::filesystem::path directory_path = ToNativeString(directory);
+		if (!std::filesystem::exists(directory_path))
+			return;
+
+		for (const auto& entry : std::filesystem::directory_iterator(directory_path))
+		{
+			std::string filename = entry.path().filename().generic_u8string();
+			if (filter_extension.empty() || wi::helper::toUpper(wi::helper::GetExtensionFromFileName(filename)).compare(filter_extension) == 0)
+			{
+				onSuccess(directory + filename);
+			}
+		}
 	}
 
 	bool Bin2H(const uint8_t* data, size_t size, const std::string& dst_filename, const char* dataName)
@@ -1156,35 +1533,77 @@ namespace wi::helper
 #endif // _WIN32
 	}
 
-	int StringConvert(const char* from, wchar_t* to)
+	int StringConvert(const char* from, wchar_t* to, int dest_size_in_characters)
 	{
 #ifdef _WIN32
 		int num = MultiByteToWideChar(CP_UTF8, 0, from, -1, NULL, 0);
 		if (num > 0)
 		{
+			if (dest_size_in_characters >= 0)
+			{
+				num = std::min(num, dest_size_in_characters);
+			}
 			MultiByteToWideChar(CP_UTF8, 0, from, -1, &to[0], num);
 		}
 		return num;
 #else
 		std::wstring_convert<std::codecvt_utf8<wchar_t>> cv;
-		std::memcpy(to, cv.from_bytes(from).c_str(), cv.converted());
-		return (int)cv.converted();
+		auto result = cv.from_bytes(from).c_str();
+		int num = (int)cv.converted();
+		if (dest_size_in_characters >= 0)
+		{
+			num = std::min(num, dest_size_in_characters);
+		}
+		std::memcpy(to, result, num * sizeof(wchar_t));
+		return num;
 #endif // _WIN32
 	}
 
-	int StringConvert(const wchar_t* from, char* to)
+	int StringConvert(const wchar_t* from, char* to, int dest_size_in_characters)
 	{
 #ifdef _WIN32
 		int num = WideCharToMultiByte(CP_UTF8, 0, from, -1, NULL, 0, NULL, NULL);
 		if (num > 0)
 		{
+			if (dest_size_in_characters >= 0)
+			{
+				num = std::min(num, dest_size_in_characters);
+			}
 			WideCharToMultiByte(CP_UTF8, 0, from, -1, &to[0], num, NULL, NULL);
 		}
 		return num;
 #else
 		std::wstring_convert<std::codecvt_utf8<wchar_t>> cv;
-		std::memcpy(to, cv.to_bytes(from).c_str(), cv.converted());
-		return (int)cv.converted();
+		auto result = cv.to_bytes(from).c_str();
+		int num = (size_t)cv.converted();
+		if (dest_size_in_characters >= 0)
+		{
+			num = std::min(num, dest_size_in_characters);
+		}
+		std::memcpy(to, result, num * sizeof(char));
+		return num;
+#endif // _WIN32
+	}
+	
+	void DebugOut(const std::string& str, DebugLevel level)
+	{
+#ifdef _WIN32
+		std::wstring wstr = ToNativeString(str);
+		OutputDebugString(wstr.c_str());
+#else
+		switch (level)
+		{
+		default:
+		case DebugLevel::Normal:
+			std::cout << str;
+			break;
+		case DebugLevel::Warning:
+			std::clog << str;
+			break;
+		case DebugLevel::Error:
+			std::cerr << str;
+			break;
+	}
 #endif // _WIN32
 	}
 	
@@ -1195,14 +1614,23 @@ namespace wi::helper
 
 	void Spin(float milliseconds)
 	{
-		milliseconds /= 1000.0f;
-		std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
-		double ms = 0;
-		while (ms < milliseconds)
+		const std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
+		const double seconds = double(milliseconds) / 1000.0;
+		while (std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::high_resolution_clock::now() - t1).count() < seconds);
+	}
+
+	void QuickSleep(float milliseconds)
+	{
+		const std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
+		const double seconds = double(milliseconds) / 1000.0;
+		const int sleep_millisec_accuracy = 1;
+		const double sleep_sec_accuracy = double(sleep_millisec_accuracy) / 1000.0;
+		while (std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::high_resolution_clock::now() - t1).count() < seconds)
 		{
-			std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
-			std::chrono::duration<double> time_span = std::chrono::duration_cast<std::chrono::duration<double>>(t2 - t1);
-			ms = time_span.count();
+			if (seconds - (std::chrono::high_resolution_clock::now() - t1).count() > sleep_sec_accuracy)
+			{
+				std::this_thread::sleep_for(std::chrono::milliseconds(sleep_millisec_accuracy));
+			}
 		}
 	}
 
@@ -1210,6 +1638,7 @@ namespace wi::helper
 	{
 #ifdef PLATFORM_UWP
 		winrt::Windows::System::Launcher::LaunchUriAsync(winrt::Windows::Foundation::Uri(winrt::to_hstring(url)));
+		return;
 #endif // PLATFORM_UWP
 
 #ifdef PLATFORM_WINDOWS_DESKTOP
@@ -1227,5 +1656,50 @@ namespace wi::helper
 #endif // PLATFORM_WINDOWS_DESKTOP
 
 		wi::backlog::post("wi::helper::OpenUrl(" + url + "): not implemented for this operating system!", wi::backlog::LogLevel::Warning);
+	}
+
+	MemoryUsage GetMemoryUsage()
+	{
+		MemoryUsage mem;
+#if defined(_WIN32)
+		// https://stackoverflow.com/questions/63166/how-to-determine-cpu-and-memory-consumption-from-inside-a-process
+		MEMORYSTATUSEX memInfo = {};
+		memInfo.dwLength = sizeof(MEMORYSTATUSEX);
+		BOOL ret = GlobalMemoryStatusEx(&memInfo);
+		assert(ret);
+		mem.total_physical = memInfo.ullTotalPhys;
+		mem.total_virtual = memInfo.ullTotalVirtual;
+
+		PROCESS_MEMORY_COUNTERS_EX pmc = {};
+		GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc));
+		mem.process_physical = pmc.WorkingSetSize;
+		mem.process_virtual = pmc.PrivateUsage;
+#elif defined(PLATFORM_LINUX)
+		// TODO Linux
+#endif // _WIN32
+		return mem;
+	}
+
+	std::string GetMemorySizeText(size_t sizeInBytes)
+	{
+		std::stringstream ss;
+		ss << std::fixed << std::setprecision(1);
+		if (sizeInBytes >= 1024ull * 1024ull * 1024ull)
+		{
+			ss << (double)sizeInBytes / 1024.0 / 1024.0 / 1024.0 << " GB";
+		}
+		else if (sizeInBytes >= 1024ull * 1024ull)
+		{
+			ss << (double)sizeInBytes / 1024.0 / 1024.0 << " MB";
+		}
+		else if (sizeInBytes >= 1024ull)
+		{
+			ss << (double)sizeInBytes / 1024.0 << " KB";
+		}
+		else
+		{
+			ss << sizeInBytes << " bytes";
+		}
+		return ss.str();
 	}
 }

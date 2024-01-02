@@ -3,15 +3,20 @@
 #ifndef REDUCED
 #define SURFACE_LOAD_ENABLE_WIND
 #endif // REDUCED
-#define SVT // "Sparse Virtual Texture"
+#define SVT_FEEDBACK
 #define TEXTURE_SLOT_NONUNIFORM
 #include "globals.hlsli"
 #include "ShaderInterop_Renderer.h"
 #include "raytracingHF.hlsli"
 #include "surfaceHF.hlsli"
-#include "objectHF.hlsli"
+#include "shadingHF.hlsli"
 
-ConstantBuffer<ShaderTypeBin> bin : register(b10);
+struct VisibilityPushConstants
+{
+	uint global_tile_offset;
+};
+PUSHCONSTANT(push, VisibilityPushConstants);
+
 StructuredBuffer<VisibilityTile> binned_tiles : register(t0);
 
 RWTexture2D<float4> output : register(u0);
@@ -23,7 +28,7 @@ RWTexture2D<uint4> output_payload_1 : register(u4);
 [numthreads(VISIBILITY_BLOCKSIZE, VISIBILITY_BLOCKSIZE, 1)]
 void main(uint Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 {
-	const uint tile_offset = bin.offset + Gid.x;
+	const uint tile_offset = push.global_tile_offset + Gid.x;
 	VisibilityTile tile = binned_tiles[tile_offset];
 	const uint2 GTid = remap_lane_8x8(groupIndex);
 	const uint2 pixel = unpack_pixel(tile.visibility_tile_id) * VISIBILITY_BLOCKSIZE + GTid;
@@ -42,21 +47,18 @@ void main(uint Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 
 	Surface surface;
 	surface.init();
-
-	[branch]
-	if (!surface.load(prim, ray.Origin, ray.Direction, rayDirection_quad_x, rayDirection_quad_y))
-	{
-		return;
-	}
 	surface.pixel = pixel.xy;
 	surface.screenUV = uv;
 
-	TiledDecals(surface, tile.entity_flat_tile_index);
-
+	[branch]
+	if (!surface.load(prim, ray.Origin, ray.Direction, rayDirection_quad_x, rayDirection_quad_y, tile.entity_flat_tile_index))
+	{
+		return;
+	}
 
 #ifdef UNLIT
 	float4 color = float4(surface.albedo, 1);
-	ApplyFog(surface.hit_depth, GetCamera().position, surface.V, color);
+	ApplyFog(surface.hit_depth, surface.V, color);
 	output[pixel] = color;
 	return;
 #endif // UNLIT
@@ -75,8 +77,8 @@ void main(uint Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 #ifndef REDUCED
 	// Pack primary payload for shading:
 	uint4 payload_0;
-	payload_0.x = pack_rgba(float4(GAMMA(surface.albedo), surface.occlusion));
-	payload_0.y = pack_rgba(float4(GAMMA(surface.f0), surface.roughness));
+	payload_0.x = pack_rgba(float4(ApplySRGBCurve_Fast(surface.albedo), surface.occlusion));
+	payload_0.y = pack_rgba(float4(ApplySRGBCurve_Fast(surface.f0), surface.roughness));
 	payload_0.z = pack_half2(encode_oct(surface.N));
 	payload_0.w = Pack_R11G11B10_FLOAT(surface.emissiveColor);
 	output_payload_0[pixel] = payload_0;

@@ -51,6 +51,8 @@ static const uint SSR_TILESIZE = 32;
 #define rtao_range ssao_range
 #define rtao_power ssao_power
 
+#define rtshadow_denoise_lightindex postprocess.params0.y
+
 #define rtdiffuse_range ssao_range
 #define rtdiffuse_frame ssr_frame
 
@@ -117,11 +119,13 @@ static const uint DEPTHOFFIELD_TILESIZE = 32;
 #define dof_cocscale postprocess.params0.x
 #define dof_maxcoc postprocess.params0.y
 
+static const uint TONEMAP_FLAG_DITHER = 1 << 0;
+static const uint TONEMAP_FLAG_ACES = 1 << 1;
 struct PushConstantsTonemap
 {
 	float2 resolution_rcp;
 	float exposure;
-	float dither;
+	uint flags;
 	float brightness;
 	float contrast;
 	float saturation;
@@ -136,13 +140,12 @@ struct PushConstantsTonemap
 	uint display_colorspace;
 };
 
-static const uint TILE_STATISTICS_OFFSET_EARLYEXIT = 0;
-static const uint TILE_STATISTICS_OFFSET_CHEAP = TILE_STATISTICS_OFFSET_EARLYEXIT + 4;
-static const uint TILE_STATISTICS_OFFSET_EXPENSIVE = TILE_STATISTICS_OFFSET_CHEAP + 4;
-static const uint INDIRECT_OFFSET_EARLYEXIT = TILE_STATISTICS_OFFSET_EXPENSIVE + 4;
-static const uint INDIRECT_OFFSET_CHEAP = INDIRECT_OFFSET_EARLYEXIT + 4 * 3;
-static const uint INDIRECT_OFFSET_EXPENSIVE = INDIRECT_OFFSET_CHEAP + 4 * 3;
-static const uint TILE_STATISTICS_CAPACITY = INDIRECT_OFFSET_EXPENSIVE + 4 * 3;
+struct PostprocessTileStatistics
+{
+	IndirectDispatchArgs dispatch_earlyexit;
+	IndirectDispatchArgs dispatch_cheap;
+	IndirectDispatchArgs dispatch_expensive;
+};
 
 
 #endif // WI_SHADERINTEROP_POSTPROCESS_H

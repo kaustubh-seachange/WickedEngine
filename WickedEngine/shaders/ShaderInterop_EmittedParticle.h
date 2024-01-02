@@ -2,6 +2,7 @@
 #define WI_SHADERINTEROP_EMITTEDPARTICLE_H
 
 #include "ShaderInterop.h"
+#include "ShaderInterop_Renderer.h"
 
 struct Particle
 {
@@ -13,7 +14,7 @@ struct Particle
 	float maxLife;
 	float2 sizeBeginEnd;
 	float life;
-	uint color_mirror;
+	uint color;
 };
 
 struct ParticleCounters
@@ -23,40 +24,46 @@ struct ParticleCounters
 	uint realEmitCount;
 	uint aliveCount_afterSimulation;
 	uint culledCount;
+	uint cellAllocator;
 };
 static const uint PARTICLECOUNTER_OFFSET_ALIVECOUNT = 0;
 static const uint PARTICLECOUNTER_OFFSET_DEADCOUNT = PARTICLECOUNTER_OFFSET_ALIVECOUNT + 4;
 static const uint PARTICLECOUNTER_OFFSET_REALEMITCOUNT = PARTICLECOUNTER_OFFSET_DEADCOUNT + 4;
 static const uint PARTICLECOUNTER_OFFSET_ALIVECOUNT_AFTERSIMULATION = PARTICLECOUNTER_OFFSET_REALEMITCOUNT + 4;
 static const uint PARTICLECOUNTER_OFFSET_CULLEDCOUNT = PARTICLECOUNTER_OFFSET_ALIVECOUNT_AFTERSIMULATION + 4;
+static const uint PARTICLECOUNTER_OFFSET_CELLALLOCATOR = PARTICLECOUNTER_OFFSET_CULLEDCOUNT + 4;
 
 static const uint EMITTER_OPTION_BIT_FRAME_BLENDING_ENABLED = 1 << 0;
 static const uint EMITTER_OPTION_BIT_SPH_ENABLED = 1 << 1;
 static const uint EMITTER_OPTION_BIT_MESH_SHADER_ENABLED = 1 << 2;
+static const uint EMITTER_OPTION_BIT_COLLIDERS_DISABLED = 1 << 3;
+static const uint EMITTER_OPTION_BIT_USE_RAIN_BLOCKER = 1 << 4;
+static const uint EMITTER_OPTION_BIT_TAKE_COLOR_FROM_MESH = 1 << 5;
 
 CBUFFER(EmittedParticleCB, CBSLOT_OTHER_EMITTEDPARTICLE)
 {
-	float4x4	xEmitterWorld;
+	ShaderTransform	xEmitterTransform;
+	ShaderTransform xEmitterBaseMeshUnormRemap;
 
 	uint		xEmitCount;
-	uint		xEmitterMeshIndexCount;
-	uint		xEmitterMeshVertexPositionStride;
 	float		xEmitterRandomness;
-
+	float		xParticleRandomColorFactor;
 	float		xParticleSize;
+
 	float		xParticleScaling;
 	float		xParticleRotation;
 	float		xParticleRandomFactor;
-
 	float		xParticleNormalFactor;
+
 	float		xParticleLifeSpan;
 	float		xParticleLifeSpanRandomness;
 	float		xParticleMass;
-
 	float		xParticleMotionBlurAmount;
+
 	uint		xEmitterMaxParticleCount;
 	uint		xEmitterInstanceIndex;
-	uint		xEmitter_padding1;
+	uint		xEmitterMeshGeometryOffset;
+	uint		xEmitterMeshGeometryCount;
 
 	uint2		xEmitterFramesXY;
 	uint		xEmitterFrameCount;
@@ -86,26 +93,26 @@ CBUFFER(EmittedParticleCB, CBSLOT_OTHER_EMITTEDPARTICLE)
 
 	float3		xParticleVelocity;
 	float		xParticleDrag;
-
-	float		xParticleRandomColorFactor;
-	int padding0;
-	int padding1;
-	int padding2;
 };
 
 static const uint THREADCOUNT_EMIT = 256;
-static const uint THREADCOUNT_SIMULATION = 256;
 static const uint THREADCOUNT_MESH_SHADER = 32;
 
 static const uint ARGUMENTBUFFER_OFFSET_DISPATCHEMIT = 0;
-static const uint ARGUMENTBUFFER_OFFSET_DISPATCHSIMULATION = ARGUMENTBUFFER_OFFSET_DISPATCHEMIT + (3 * 4);
-static const uint ARGUMENTBUFFER_OFFSET_DRAWPARTICLES = ARGUMENTBUFFER_OFFSET_DISPATCHSIMULATION + (3 * 4);
+static const uint ARGUMENTBUFFER_OFFSET_DISPATCHSIMULATION = wi::graphics::AlignTo(ARGUMENTBUFFER_OFFSET_DISPATCHEMIT + (3 * 4), IndirectDispatchArgsAlignment);
+static const uint ARGUMENTBUFFER_OFFSET_DRAWPARTICLES = wi::graphics::AlignTo(ARGUMENTBUFFER_OFFSET_DISPATCHSIMULATION + (3 * 4), IndirectDrawArgsAlignment);
 
 
 // If this is not defined, SPH will be resolved as N-body simulation (O(n^2) complexity)
 // If this is defined, SPH will be sorted into a hashed grid structure and response lookup will be accelerated
 #define SPH_USE_ACCELERATION_GRID
 static const uint SPH_PARTITION_BUCKET_COUNT = 128 * 128 * 64;
+
+#ifdef SPH_USE_ACCELERATION_GRID
+static const uint THREADCOUNT_SIMULATION = 64;
+#else
+static const uint THREADCOUNT_SIMULATION = 256;
+#endif // SPH_USE_ACCELERATION_GRID
 
 inline uint SPH_GridHash(int3 cellIndex)
 {
@@ -116,6 +123,42 @@ inline uint SPH_GridHash(int3 cellIndex)
 	n %= SPH_PARTITION_BUCKET_COUNT;
 	return n;
 }
+struct SPHGridCell
+{
+	uint count;
+	uint offset;
+};
+
+// 27 neighbor offsets in a 3D grid, including center cell:
+static const int3 sph_neighbor_offsets[27] = {
+	int3(-1, -1, -1),
+	int3(-1, -1, 0),
+	int3(-1, -1, 1),
+	int3(-1, 0, -1),
+	int3(-1, 0, 0),
+	int3(-1, 0, 1),
+	int3(-1, 1, -1),
+	int3(-1, 1, 0),
+	int3(-1, 1, 1),
+	int3(0, -1, -1),
+	int3(0, -1, 0),
+	int3(0, -1, 1),
+	int3(0, 0, -1),
+	int3(0, 0, 0),
+	int3(0, 0, 1),
+	int3(0, 1, -1),
+	int3(0, 1, 0),
+	int3(0, 1, 1),
+	int3(1, -1, -1),
+	int3(1, -1, 0),
+	int3(1, -1, 1),
+	int3(1, 0, -1),
+	int3(1, 0, 0),
+	int3(1, 0, 1),
+	int3(1, 1, -1),
+	int3(1, 1, 0),
+	int3(1, 1, 1),
+};
 
 #endif // WI_SHADERINTEROP_EMITTEDPARTICLE_H
 

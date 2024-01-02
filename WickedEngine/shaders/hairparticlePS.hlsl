@@ -16,7 +16,6 @@ float4 main(VertexToPixel input) : SV_Target
 	if (material.textures[BASECOLORMAP].IsValid() && (GetFrame().options & OPTION_BIT_DISABLE_ALBEDO_MAPS) == 0)
 	{
 		color = material.textures[BASECOLORMAP].Sample(sampler_linear_wrap, input.tex.xyxy);
-		color.rgb = DEGAMMA(color.rgb);
 	}
 	color *= material.baseColor;
 
@@ -30,7 +29,7 @@ float4 main(VertexToPixel input) : SV_Target
 
 	Surface surface;
 	surface.init();
-	surface.create(material, color, 0);
+	surface.create(material, color, surfacemap_simple);
 	surface.P = input.pos3D;
 	surface.N = input.nor;
 	surface.V = V;
@@ -58,12 +57,16 @@ float4 main(VertexToPixel input) : SV_Target
 	float depth = input.pos.z;
 	float3 reflection = 0;
 
-	TiledLighting(surface, lighting);
+	TiledLighting(surface, lighting, GetFlatTileIndex(pixel));
 
 
 	ApplyLighting(surface, lighting, color);
 
-	ApplyFog(dist, GetCamera().position, V, color);
-
+#ifdef TRANSPARENT
+	ApplyAerialPerspective(ScreenCoord, surface.P, color);
+#endif // TRANSPARENT
+	
+	ApplyFog(dist, V, color);
+	
 	return color;
 }

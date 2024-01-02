@@ -12,6 +12,15 @@
 #include "wiUnorderedMap.h"
 #include "wiLua.h"
 
+#if __has_include("OpenImageDenoise/oidn.hpp")
+#include "OpenImageDenoise/oidn.hpp"
+#if OIDN_VERSION_MAJOR >= 2
+#define OPEN_IMAGE_DENOISE
+#pragma comment(lib,"OpenImageDenoise.lib")
+// Also provide the required DLL files from OpenImageDenoise release near the exe!
+#endif // OIDN_VERSION_MAJOR >= 2
+#endif // __has_include("OpenImageDenoise/oidn.hpp")
+
 using namespace wi::ecs;
 using namespace wi::enums;
 using namespace wi::graphics;
@@ -260,6 +269,19 @@ namespace wi::scene
 		material.alphaTest = 1 - alphaRef;
 		material.layerMask = layerMask;
 		material.transmission = transmission;
+		if (shaderType == SHADERTYPE_PBR_ANISOTROPIC)
+		{
+			material.anisotropy_strength = wi::math::Clamp(anisotropy_strength, 0, 0.99f);
+			material.anisotropy_rotation_sin = std::sin(anisotropy_rotation);
+			material.anisotropy_rotation_cos = std::cos(anisotropy_rotation);
+		}
+		else
+		{
+			material.anisotropy_strength = 0;
+			material.anisotropy_rotation_sin = 0;
+			material.anisotropy_rotation_cos = 0;
+		}
+		material.stencilRef = wi::renderer::CombineStencilrefs(engineStencilRef, userStencilRef);
 		material.shaderType = (uint)shaderType;
 		material.userdata = userdata;
 
@@ -313,7 +335,32 @@ namespace wi::scene
 		for (int i = 0; i < TEXTURESLOT_COUNT; ++i)
 		{
 			material.textures[i].uvset_lodclamp = (textures[i].uvset & 1) | (XMConvertFloatToHalf(textures[i].lod_clamp) << 1u);
-			material.textures[i].texture_descriptor = device->GetDescriptorIndex(textures[i].GetGPUResource(), SubresourceType::SRV);
+			if (textures[i].resource.IsValid())
+			{
+				int subresource = -1;
+				switch (i)
+				{
+				case BASECOLORMAP:
+				case EMISSIVEMAP:
+				case SPECULARMAP:
+				case SHEENCOLORMAP:
+					subresource = textures[i].resource.GetTextureSRGBSubresource();
+					break;
+				case SURFACEMAP:
+					if (IsUsingSpecularGlossinessWorkflow())
+					{
+						subresource = textures[i].resource.GetTextureSRGBSubresource();
+					}
+					break;
+				default:
+					break;
+				}
+				material.textures[i].texture_descriptor = device->GetDescriptorIndex(textures[i].GetGPUResource(), SubresourceType::SRV, subresource);
+			}
+			else
+			{
+				material.textures[i].texture_descriptor = -1;
+			}
 			material.textures[i].sparse_residencymap_descriptor = textures[i].sparse_residencymap_descriptor;
 			material.textures[i].sparse_feedbackmap_descriptor = textures[i].sparse_feedbackmap_descriptor;
 		}
@@ -328,6 +375,10 @@ namespace wi::scene
 		}
 
 		std::memcpy(dest, &material, sizeof(ShaderMaterial)); // memcpy whole structure into mapped pointer to avoid read from uncached memory
+	}
+	void MaterialComponent::WriteShaderTextureSlot(ShaderMaterial* dest, int slot, int descriptor)
+	{
+		std::memcpy(&dest->textures[slot].texture_descriptor, &descriptor, sizeof(descriptor)); // memcpy into mapped pointer to avoid read from uncached memory
 	}
 	void MaterialComponent::WriteTextures(const wi::graphics::GPUResource** dest, int count) const
 	{
@@ -358,13 +409,44 @@ namespace wi::scene
 		}
 		return FILTER_TRANSPARENT;
 	}
-	void MaterialComponent::CreateRenderData()
+	wi::resourcemanager::Flags MaterialComponent::GetTextureSlotResourceFlags(TEXTURESLOT slot)
 	{
-		for (auto& x : textures)
+		wi::resourcemanager::Flags flags = wi::resourcemanager::Flags::IMPORT_RETAIN_FILEDATA;
+		if (!IsPreferUncompressedTexturesEnabled())
 		{
-			if (!x.name.empty())
+			flags |= wi::resourcemanager::Flags::IMPORT_BLOCK_COMPRESSED;
+		}
+		switch (slot)
+		{
+		case NORMALMAP:
+		case CLEARCOATNORMALMAP:
+			flags |= wi::resourcemanager::Flags::IMPORT_NORMALMAP;
+			break;
+		default:
+			break;
+		}
+		return flags;
+	}
+	void MaterialComponent::CreateRenderData(bool force_recreate)
+	{
+		if (force_recreate)
+		{
+			for (uint32_t slot = 0; slot < TEXTURESLOT_COUNT; ++slot)
 			{
-				x.resource = wi::resourcemanager::Load(x.name, wi::resourcemanager::Flags::IMPORT_RETAIN_FILEDATA);
+				auto& textureslot = textures[slot];
+				if (textureslot.resource.IsValid())
+				{
+					textureslot.resource.SetOutdated();
+				}
+			}
+		}
+		for (uint32_t slot = 0; slot < TEXTURESLOT_COUNT; ++slot)
+		{
+			auto& textureslot = textures[slot];
+			if (!textureslot.name.empty())
+			{
+				wi::resourcemanager::Flags flags = GetTextureSlotResourceFlags(TEXTURESLOT(slot));
+				textureslot.resource = wi::resourcemanager::Load(textureslot.name, flags);
 			}
 		}
 	}
@@ -378,16 +460,23 @@ namespace wi::scene
 		generalBuffer = {};
 		streamoutBuffer = {};
 		ib = {};
-		vb_pos_nor_wind = {};
+		vb_pos_wind = {};
+		vb_nor = {};
 		vb_tan = {};
 		vb_uvs = {};
 		vb_atl = {};
 		vb_col = {};
 		vb_bon = {};
-		so_pos_nor_wind = {};
+		so_pos = {};
+		so_nor = {};
 		so_tan = {};
 		so_pre = {};
 		BLASes.clear();
+		for (MorphTarget& morph : morph_targets)
+		{
+			morph.offset_pos = ~0ull;
+			morph.offset_nor = ~0ull;
+		}
 	}
 	void MeshComponent::CreateRenderData()
 	{
@@ -475,18 +564,129 @@ namespace wi::scene
 
 		const size_t uv_count = std::max(vertex_uvset_0.size(), vertex_uvset_1.size());
 
+		// Bounds computation:
+		XMFLOAT3 _min = XMFLOAT3(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+		XMFLOAT3 _max = XMFLOAT3(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
+		for (size_t i = 0; i < vertex_positions.size(); ++i)
+		{
+			const XMFLOAT3& pos = vertex_positions[i];
+			_min = wi::math::Min(_min, pos);
+			_max = wi::math::Max(_max, pos);
+		}
+		aabb = AABB(_min, _max);
+
+		if (IsQuantizedPositionsDisabled())
+		{
+			position_format = vertex_windweights.empty() ? Vertex_POS32::FORMAT : Vertex_POS32W::FORMAT;
+		}
+		else
+		{
+			// Determine minimum precision for positions:
+			const float target_precision = 1.0f / 1000.0f; // millimeter
+			position_format = Vertex_POS10::FORMAT;
+			for (size_t i = 0; i < vertex_positions.size(); ++i)
+			{
+				const XMFLOAT3& pos = vertex_positions[i];
+				const uint8_t wind = vertex_windweights.empty() ? 0xFF : vertex_windweights[i];
+				if (position_format == Vertex_POS10::FORMAT)
+				{
+					Vertex_POS10 v;
+					v.FromFULL(aabb, pos, wind);
+					XMFLOAT3 p = v.GetPOS(aabb);
+					if (
+						std::abs(p.x - pos.x) <= target_precision &&
+						std::abs(p.y - pos.y) <= target_precision &&
+						std::abs(p.z - pos.z) <= target_precision &&
+						wind == v.GetWind()
+						)
+					{
+						// success, continue to next vertex with 8 bits
+						continue;
+					}
+					position_format = Vertex_POS16::FORMAT; // failed, increase to 16 bits
+				}
+				if (position_format == Vertex_POS16::FORMAT)
+				{
+					Vertex_POS16 v;
+					v.FromFULL(aabb, pos, wind);
+					XMFLOAT3 p = v.GetPOS(aabb);
+					if (
+						std::abs(p.x - pos.x) <= target_precision &&
+						std::abs(p.y - pos.y) <= target_precision &&
+						std::abs(p.z - pos.z) <= target_precision &&
+						wind == v.GetWind()
+						)
+					{
+						// success, continue to next vertex with 16 bits
+						continue;
+					}
+					position_format = vertex_windweights.empty() ? Vertex_POS32::FORMAT : Vertex_POS32W::FORMAT; // failed, increase to 32 bits
+					break; // since 32 bit is the max, we can bail out
+				}
+			}
+
+			if (IsFormatUnorm(position_format))
+			{
+				// This is done to avoid 0 scaling on any axis of the UNORM remap matrix of the AABB
+				//	It specifically solves a problem with hardware raytracing which treats AABB with zero axis as invisible
+				if (aabb._max.x - aabb._min.x < std::numeric_limits<float>::epsilon())
+				{
+					aabb._max.x += std::numeric_limits<float>::epsilon();
+					aabb._min.x -= std::numeric_limits<float>::epsilon();
+				}
+				if (aabb._max.y - aabb._min.y < std::numeric_limits<float>::epsilon())
+				{
+					aabb._max.y += std::numeric_limits<float>::epsilon();
+					aabb._min.y -= std::numeric_limits<float>::epsilon();
+				}
+				if (aabb._max.z - aabb._min.z < std::numeric_limits<float>::epsilon())
+				{
+					aabb._max.z += std::numeric_limits<float>::epsilon();
+					aabb._min.z -= std::numeric_limits<float>::epsilon();
+				}
+			}
+		}
+
+		// Determine UV range for normalization:
+		if (!vertex_uvset_0.empty() || !vertex_uvset_1.empty())
+		{
+			const XMFLOAT2* uv0_stream = vertex_uvset_0.empty() ? vertex_uvset_1.data() : vertex_uvset_0.data();
+			const XMFLOAT2* uv1_stream = vertex_uvset_1.empty() ? vertex_uvset_0.data() : vertex_uvset_1.data();
+
+			uv_range_min = XMFLOAT2(std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+			uv_range_max = XMFLOAT2(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
+			for (size_t i = 0; i < uv_count; ++i)
+			{
+				uv_range_max = wi::math::Max(uv_range_max, uv0_stream[i]);
+				uv_range_max = wi::math::Max(uv_range_max, uv1_stream[i]);
+				uv_range_min = wi::math::Min(uv_range_min, uv0_stream[i]);
+				uv_range_min = wi::math::Min(uv_range_min, uv1_stream[i]);
+			}
+		}
+
+		const size_t position_stride = GetFormatStride(position_format);
+
 		GPUBufferDesc bd;
-		bd.usage = Usage::DEFAULT;
+		if (device->CheckCapability(GraphicsDeviceCapability::CACHE_COHERENT_UMA))
+		{
+			// In UMA mode, it is better to create UPLOAD buffer, this avoids one copy from UPLOAD to DEFAULT
+			bd.usage = Usage::UPLOAD;
+		}
+		else
+		{
+			bd.usage = Usage::DEFAULT;
+		}
 		bd.bind_flags = BindFlag::VERTEX_BUFFER | BindFlag::INDEX_BUFFER | BindFlag::SHADER_RESOURCE;
-		bd.misc_flags = ResourceMiscFlag::BUFFER_RAW;
+		bd.misc_flags = ResourceMiscFlag::BUFFER_RAW | ResourceMiscFlag::TYPED_FORMAT_CASTING | ResourceMiscFlag::NO_DEFAULT_DESCRIPTORS;
 		if (device->CheckCapability(GraphicsDeviceCapability::RAYTRACING))
 		{
 			bd.misc_flags |= ResourceMiscFlag::RAY_TRACING;
 		}
 		const uint64_t alignment = device->GetMinOffsetAlignment(&bd);
 		bd.size =
+			AlignTo(vertex_positions.size() * position_stride, alignment) + // position will be first to have 0 offset for flexible alignment!
 			AlignTo(indices.size() * GetIndexStride(), alignment) +
-			AlignTo(vertex_positions.size() * sizeof(Vertex_POS), alignment) +
+			AlignTo(vertex_normals.size() * sizeof(Vertex_NOR), alignment) +
 			AlignTo(vertex_tangents.size() * sizeof(Vertex_TAN), alignment) +
 			AlignTo(uv_count * sizeof(Vertex_UVS), alignment) +
 			AlignTo(vertex_atlas.size() * sizeof(Vertex_TEX), alignment) +
@@ -494,140 +694,284 @@ namespace wi::scene
 			AlignTo(vertex_boneindices.size() * sizeof(Vertex_BON), alignment)
 			;
 
-		// single allocation storage for GPU buffer data:
-		wi::vector<uint8_t> buffer_data(bd.size);
-		uint64_t buffer_offset = 0ull;
-
-		// Create index buffer GPU data:
-		if (GetIndexFormat() == IndexBufferFormat::UINT32)
+		constexpr Format morph_format = Format::R16G16B16A16_FLOAT;
+		constexpr size_t morph_stride = GetFormatStride(morph_format);
+		for (MorphTarget& morph : morph_targets)
 		{
-			ib.offset = buffer_offset;
-			ib.size = indices.size() * sizeof(uint32_t);
-			uint32_t* indexdata = (uint32_t*)(buffer_data.data() + buffer_offset);
-			buffer_offset += AlignTo(ib.size, alignment);
-			for (size_t i = 0; i < indices.size(); ++i)
+			if (!morph.vertex_positions.empty())
 			{
-				indexdata[i] = indices[i];
+				bd.size += AlignTo(vertex_positions.size() * morph_stride, alignment);
 			}
-		}
-		else
-		{
-			ib.offset = buffer_offset;
-			ib.size = indices.size() * sizeof(uint16_t);
-			uint16_t* indexdata = (uint16_t*)(buffer_data.data() + buffer_offset);
-			buffer_offset += AlignTo(ib.size, alignment);
-			for (size_t i = 0; i < indices.size(); ++i)
+			if (!morph.vertex_normals.empty())
 			{
-				indexdata[i] = (uint16_t)indices[i];
+				bd.size += AlignTo(vertex_normals.size() * morph_stride, alignment);
 			}
 		}
 
-		XMFLOAT3 _min = XMFLOAT3(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
-		XMFLOAT3 _max = XMFLOAT3(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
+		auto init_callback = [&](void* dest) {
+			uint8_t* buffer_data = (uint8_t*)dest;
+			uint64_t buffer_offset = 0ull;
 
-		// vertexBuffer - POSITION + NORMAL + WIND:
-		{
-			vb_pos_nor_wind.offset = buffer_offset;
-			vb_pos_nor_wind.size = vertex_positions.size() * sizeof(Vertex_POS);
-			Vertex_POS* vertices = (Vertex_POS*)(buffer_data.data() + buffer_offset);
-			buffer_offset += AlignTo(vb_pos_nor_wind.size, alignment);
-			for (size_t i = 0; i < vertex_positions.size(); ++i)
+			// vertexBuffer - POSITION + WIND:
+			switch (position_format)
 			{
-				const XMFLOAT3& pos = vertex_positions[i];
-				XMFLOAT3 nor = vertex_normals.empty() ? XMFLOAT3(1, 1, 1) : vertex_normals[i];
-				XMStoreFloat3(&nor, XMVector3Normalize(XMLoadFloat3(&nor)));
-				const uint8_t wind = vertex_windweights.empty() ? 0xFF : vertex_windweights[i];
-				vertices[i].FromFULL(pos, nor, wind);
-
-				_min = wi::math::Min(_min, pos);
-				_max = wi::math::Max(_max, pos);
-			}
-		}
-
-		aabb = AABB(_min, _max);
-
-		// vertexBuffer - TANGENTS
-		if (!vertex_tangents.empty())
-		{
-			vb_tan.offset = buffer_offset;
-			vb_tan.size = vertex_tangents.size() * sizeof(Vertex_TAN);
-			Vertex_TAN* vertices = (Vertex_TAN*)(buffer_data.data() + buffer_offset);
-			buffer_offset += AlignTo(vb_tan.size, alignment);
-			for (size_t i = 0; i < vertex_tangents.size(); ++i)
+			case Vertex_POS10::FORMAT:
 			{
-				vertices[i].FromFULL(vertex_tangents[i]);
-			}
-		}
-
-		// vertexBuffer - UV SETS
-		if (!vertex_uvset_0.empty() || !vertex_uvset_1.empty())
-		{
-			const XMFLOAT2* uv0_stream = vertex_uvset_0.empty() ? vertex_uvset_1.data() : vertex_uvset_0.data();
-			const XMFLOAT2* uv1_stream = vertex_uvset_1.empty() ? vertex_uvset_0.data() : vertex_uvset_1.data();
-
-			vb_uvs.offset = buffer_offset;
-			vb_uvs.size = uv_count * sizeof(Vertex_UVS);
-			Vertex_UVS* vertices = (Vertex_UVS*)(buffer_data.data() + buffer_offset);
-			buffer_offset += AlignTo(vb_uvs.size, alignment);
-			for (size_t i = 0; i < uv_count; ++i)
-			{
-				vertices[i].uv0.FromFULL(uv0_stream[i]);
-				vertices[i].uv1.FromFULL(uv1_stream[i]);
-			}
-		}
-
-		// vertexBuffer - ATLAS
-		if (!vertex_atlas.empty())
-		{
-			vb_atl.offset = buffer_offset;
-			vb_atl.size = vertex_atlas.size() * sizeof(Vertex_TEX);
-			Vertex_TEX* vertices = (Vertex_TEX*)(buffer_data.data() + buffer_offset);
-			buffer_offset += AlignTo(vb_atl.size, alignment);
-			for (size_t i = 0; i < vertex_atlas.size(); ++i)
-			{
-				vertices[i].FromFULL(vertex_atlas[i]);
-			}
-		}
-
-		// vertexBuffer - COLORS
-		if (!vertex_colors.empty())
-		{
-			vb_col.offset = buffer_offset;
-			vb_col.size = vertex_colors.size() * sizeof(Vertex_COL);
-			Vertex_COL* vertices = (Vertex_COL*)(buffer_data.data() + buffer_offset);
-			buffer_offset += AlignTo(vb_col.size, alignment);
-			for (size_t i = 0; i < vertex_colors.size(); ++i)
-			{
-				vertices[i].color = vertex_colors[i];
-			}
-		}
-
-		// skinning buffers:
-		if (!vertex_boneindices.empty())
-		{
-			vb_bon.offset = buffer_offset;
-			vb_bon.size = vertex_boneindices.size() * sizeof(Vertex_BON);
-			Vertex_BON* vertices = (Vertex_BON*)(buffer_data.data() + buffer_offset);
-			buffer_offset += AlignTo(vb_bon.size, alignment);
-			assert(vertex_boneindices.size() == vertex_boneweights.size());
-			for (size_t i = 0; i < vertex_boneindices.size(); ++i)
-			{
-				XMFLOAT4& wei = vertex_boneweights[i];
-				// normalize bone weights
-				float len = wei.x + wei.y + wei.z + wei.w;
-				if (len > 0)
+				vb_pos_wind.offset = buffer_offset;
+				vb_pos_wind.size = vertex_positions.size() * sizeof(Vertex_POS10);
+				Vertex_POS10* vertices = (Vertex_POS10*)(buffer_data + buffer_offset);
+				buffer_offset += AlignTo(vb_pos_wind.size, alignment);
+				for (size_t i = 0; i < vertex_positions.size(); ++i)
 				{
-					wei.x /= len;
-					wei.y /= len;
-					wei.z /= len;
-					wei.w /= len;
+					XMFLOAT3 pos = vertex_positions[i];
+					const uint8_t wind = vertex_windweights.empty() ? 0xFF : vertex_windweights[i];
+					Vertex_POS10 vert;
+					vert.FromFULL(aabb, pos, wind);
+					std::memcpy(vertices + i, &vert, sizeof(vert));
 				}
-				vertices[i].FromFULL(vertex_boneindices[i], wei);
 			}
-			CreateStreamoutRenderData();
-		}
+			break;
+			case Vertex_POS16::FORMAT:
+			{
+				vb_pos_wind.offset = buffer_offset;
+				vb_pos_wind.size = vertex_positions.size() * sizeof(Vertex_POS16);
+				Vertex_POS16* vertices = (Vertex_POS16*)(buffer_data + buffer_offset);
+				buffer_offset += AlignTo(vb_pos_wind.size, alignment);
+				for (size_t i = 0; i < vertex_positions.size(); ++i)
+				{
+					XMFLOAT3 pos = vertex_positions[i];
+					const uint8_t wind = vertex_windweights.empty() ? 0xFF : vertex_windweights[i];
+					Vertex_POS16 vert;
+					vert.FromFULL(aabb, pos, wind);
+					std::memcpy(vertices + i, &vert, sizeof(vert));
+				}
+			}
+			break;
+			case Vertex_POS32::FORMAT:
+			{
+				vb_pos_wind.offset = buffer_offset;
+				vb_pos_wind.size = vertex_positions.size() * sizeof(Vertex_POS32);
+				Vertex_POS32* vertices = (Vertex_POS32*)(buffer_data + buffer_offset);
+				buffer_offset += AlignTo(vb_pos_wind.size, alignment);
+				for (size_t i = 0; i < vertex_positions.size(); ++i)
+				{
+					const XMFLOAT3& pos = vertex_positions[i];
+					const uint8_t wind = vertex_windweights.empty() ? 0xFF : vertex_windweights[i];
+					Vertex_POS32 vert;
+					vert.FromFULL(pos);
+					std::memcpy(vertices + i, &vert, sizeof(vert));
+				}
+			}
+			break;
+			case Vertex_POS32W::FORMAT:
+			{
+				vb_pos_wind.offset = buffer_offset;
+				vb_pos_wind.size = vertex_positions.size() * sizeof(Vertex_POS32W);
+				Vertex_POS32W* vertices = (Vertex_POS32W*)(buffer_data + buffer_offset);
+				buffer_offset += AlignTo(vb_pos_wind.size, alignment);
+				for (size_t i = 0; i < vertex_positions.size(); ++i)
+				{
+					const XMFLOAT3& pos = vertex_positions[i];
+					const uint8_t wind = vertex_windweights.empty() ? 0xFF : vertex_windweights[i];
+					Vertex_POS32W vert;
+					vert.FromFULL(pos, wind);
+					std::memcpy(vertices + i, &vert, sizeof(vert));
+				}
+			}
+			break;
+			default:
+				assert(0);
+				break;
+			}
 
-		bool success = device->CreateBuffer(&bd, buffer_data.data(), &generalBuffer);
+			// Create index buffer GPU data:
+			if (GetIndexFormat() == IndexBufferFormat::UINT32)
+			{
+				ib.offset = buffer_offset;
+				ib.size = indices.size() * sizeof(uint32_t);
+				uint32_t* indexdata = (uint32_t*)(buffer_data + buffer_offset);
+				buffer_offset += AlignTo(ib.size, alignment);
+				std::memcpy(indexdata, indices.data(), ib.size);
+			}
+			else
+			{
+				ib.offset = buffer_offset;
+				ib.size = indices.size() * sizeof(uint16_t);
+				uint16_t* indexdata = (uint16_t*)(buffer_data + buffer_offset);
+				buffer_offset += AlignTo(ib.size, alignment);
+				for (size_t i = 0; i < indices.size(); ++i)
+				{
+					std::memcpy(indexdata + i, &indices[i], sizeof(uint16_t));
+				}
+			}
+
+			// vertexBuffer - NORMALS:
+			if (!vertex_normals.empty())
+			{
+				vb_nor.offset = buffer_offset;
+				vb_nor.size = vertex_normals.size() * sizeof(Vertex_NOR);
+				Vertex_NOR* vertices = (Vertex_NOR*)(buffer_data + buffer_offset);
+				buffer_offset += AlignTo(vb_nor.size, alignment);
+				for (size_t i = 0; i < vertex_normals.size(); ++i)
+				{
+					XMFLOAT3 nor = vertex_normals.empty() ? XMFLOAT3(1, 1, 1) : vertex_normals[i];
+					XMStoreFloat3(&nor, XMVector3Normalize(XMLoadFloat3(&nor)));
+					Vertex_NOR vert;
+					vert.FromFULL(nor);
+					std::memcpy(vertices + i, &vert, sizeof(vert));
+				}
+			}
+
+			// vertexBuffer - TANGENTS
+			if (!vertex_tangents.empty())
+			{
+				vb_tan.offset = buffer_offset;
+				vb_tan.size = vertex_tangents.size() * sizeof(Vertex_TAN);
+				Vertex_TAN* vertices = (Vertex_TAN*)(buffer_data + buffer_offset);
+				buffer_offset += AlignTo(vb_tan.size, alignment);
+				for (size_t i = 0; i < vertex_tangents.size(); ++i)
+				{
+					Vertex_TAN vert;
+					vert.FromFULL(vertex_tangents[i]);
+					std::memcpy(vertices + i, &vert, sizeof(vert));
+				}
+			}
+
+			// vertexBuffer - UV SETS
+			if (!vertex_uvset_0.empty() || !vertex_uvset_1.empty())
+			{
+				const XMFLOAT2* uv0_stream = vertex_uvset_0.empty() ? vertex_uvset_1.data() : vertex_uvset_0.data();
+				const XMFLOAT2* uv1_stream = vertex_uvset_1.empty() ? vertex_uvset_0.data() : vertex_uvset_1.data();
+
+				vb_uvs.offset = buffer_offset;
+				vb_uvs.size = uv_count * sizeof(Vertex_UVS);
+				Vertex_UVS* vertices = (Vertex_UVS*)(buffer_data + buffer_offset);
+				buffer_offset += AlignTo(vb_uvs.size, alignment);
+				for (size_t i = 0; i < uv_count; ++i)
+				{
+					Vertex_UVS vert;
+					vert.uv0.FromFULL(uv0_stream[i], uv_range_min, uv_range_max);
+					vert.uv1.FromFULL(uv1_stream[i], uv_range_min, uv_range_max);
+					std::memcpy(vertices + i, &vert, sizeof(vert));
+				}
+			}
+
+			// vertexBuffer - ATLAS
+			if (!vertex_atlas.empty())
+			{
+				vb_atl.offset = buffer_offset;
+				vb_atl.size = vertex_atlas.size() * sizeof(Vertex_TEX);
+				Vertex_TEX* vertices = (Vertex_TEX*)(buffer_data + buffer_offset);
+				buffer_offset += AlignTo(vb_atl.size, alignment);
+				for (size_t i = 0; i < vertex_atlas.size(); ++i)
+				{
+					Vertex_TEX vert;
+					vert.FromFULL(vertex_atlas[i]);
+					std::memcpy(vertices + i, &vert, sizeof(vert));
+				}
+			}
+
+			// vertexBuffer - COLORS
+			if (!vertex_colors.empty())
+			{
+				vb_col.offset = buffer_offset;
+				vb_col.size = vertex_colors.size() * sizeof(Vertex_COL);
+				Vertex_COL* vertices = (Vertex_COL*)(buffer_data + buffer_offset);
+				buffer_offset += AlignTo(vb_col.size, alignment);
+				for (size_t i = 0; i < vertex_colors.size(); ++i)
+				{
+					Vertex_COL vert;
+					vert.color = vertex_colors[i];
+					std::memcpy(vertices + i, &vert, sizeof(vert));
+				}
+			}
+
+			// skinning buffers:
+			if (!vertex_boneindices.empty())
+			{
+				vb_bon.offset = buffer_offset;
+				vb_bon.size = vertex_boneindices.size() * sizeof(Vertex_BON);
+				Vertex_BON* vertices = (Vertex_BON*)(buffer_data + buffer_offset);
+				buffer_offset += AlignTo(vb_bon.size, alignment);
+				assert(vertex_boneindices.size() == vertex_boneweights.size());
+				for (size_t i = 0; i < vertex_boneindices.size(); ++i)
+				{
+					XMFLOAT4& wei = vertex_boneweights[i];
+					// normalize bone weights
+					float len = wei.x + wei.y + wei.z + wei.w;
+					if (len > 0)
+					{
+						wei.x /= len;
+						wei.y /= len;
+						wei.z /= len;
+						wei.w /= len;
+					}
+					Vertex_BON vert;
+					vert.FromFULL(vertex_boneindices[i], wei);
+					std::memcpy(vertices + i, &vert, sizeof(vert));
+				}
+			}
+
+			// morph buffers:
+			if (!morph_targets.empty())
+			{
+				vb_mor.offset = buffer_offset;
+				for (MorphTarget& morph : morph_targets)
+				{
+					if (!morph.vertex_positions.empty())
+					{
+						morph.offset_pos = (buffer_offset - vb_mor.offset) / morph_stride;
+						XMHALF4* vertices = (XMHALF4*)(buffer_data + buffer_offset);
+						std::fill(vertices, vertices + vertex_positions.size(), 0);
+						if (morph.sparse_indices_positions.empty())
+						{
+							// flat morphs:
+							for (size_t i = 0; i < morph.vertex_positions.size(); ++i)
+							{
+								XMStoreHalf4(vertices + i, XMLoadFloat3(&morph.vertex_positions[i]));
+							}
+						}
+						else
+						{
+							// sparse morphs will be flattened for GPU because they will be evaluated in skinning for every vertex:
+							for (size_t i = 0; i < morph.sparse_indices_positions.size(); ++i)
+							{
+								const uint32_t ind = morph.sparse_indices_positions[i];
+								XMStoreHalf4(vertices + ind, XMLoadFloat3(&morph.vertex_positions[i]));
+							}
+						}
+						buffer_offset += AlignTo(morph.vertex_positions.size() * sizeof(XMHALF4), alignment);
+					}
+					if (!morph.vertex_normals.empty())
+					{
+						morph.offset_nor = (buffer_offset - vb_mor.offset) / morph_stride;
+						XMHALF4* vertices = (XMHALF4*)(buffer_data + buffer_offset);
+						std::fill(vertices, vertices + vertex_normals.size(), 0);
+						if (morph.sparse_indices_normals.empty())
+						{
+							// flat morphs:
+							for (size_t i = 0; i < morph.vertex_normals.size(); ++i)
+							{
+								XMStoreHalf4(vertices + i, XMLoadFloat3(&morph.vertex_normals[i]));
+							}
+						}
+						else
+						{
+							// sparse morphs will be flattened for GPU because they will be evaluated in skinning for every vertex:
+							for (size_t i = 0; i < morph.sparse_indices_normals.size(); ++i)
+							{
+								const uint32_t ind = morph.sparse_indices_normals[i];
+								XMStoreHalf4(vertices + ind, XMLoadFloat3(&morph.vertex_normals[i]));
+							}
+						}
+						buffer_offset += AlignTo(morph.vertex_normals.size() * sizeof(XMHALF4), alignment);
+					}
+				}
+				vb_mor.size = buffer_offset - vb_mor.offset;
+			}
+		};
+
+		bool success = device->CreateBuffer2(&bd, init_callback, &generalBuffer);
 		assert(success);
 		device->SetName(&generalBuffer, "MeshComponent::generalBuffer");
 
@@ -636,34 +980,49 @@ namespace wi::scene
 		ib.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, ib.offset, ib.size, &ib_format);
 		ib.descriptor_srv = device->GetDescriptorIndex(&generalBuffer, SubresourceType::SRV, ib.subresource_srv);
 
-		assert(vb_pos_nor_wind.IsValid());
-		vb_pos_nor_wind.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_pos_nor_wind.offset, vb_pos_nor_wind.size);
-		vb_pos_nor_wind.descriptor_srv = device->GetDescriptorIndex(&generalBuffer, SubresourceType::SRV, vb_pos_nor_wind.subresource_srv);
+		assert(vb_pos_wind.IsValid());
+		vb_pos_wind.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_pos_wind.offset, vb_pos_wind.size, &position_format);
+		vb_pos_wind.descriptor_srv = device->GetDescriptorIndex(&generalBuffer, SubresourceType::SRV, vb_pos_wind.subresource_srv);
 
+		if (vb_nor.IsValid())
+		{
+			vb_nor.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_nor.offset, vb_nor.size, &Vertex_NOR::FORMAT);
+			vb_nor.descriptor_srv = device->GetDescriptorIndex(&generalBuffer, SubresourceType::SRV, vb_nor.subresource_srv);
+		}
 		if (vb_tan.IsValid())
 		{
-			vb_tan.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_tan.offset, vb_tan.size);
+			vb_tan.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_tan.offset, vb_tan.size, &Vertex_TAN::FORMAT);
 			vb_tan.descriptor_srv = device->GetDescriptorIndex(&generalBuffer, SubresourceType::SRV, vb_tan.subresource_srv);
 		}
 		if (vb_uvs.IsValid())
 		{
-			vb_uvs.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_uvs.offset, vb_uvs.size);
+			vb_uvs.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_uvs.offset, vb_uvs.size, &Vertex_UVS::FORMAT);
 			vb_uvs.descriptor_srv = device->GetDescriptorIndex(&generalBuffer, SubresourceType::SRV, vb_uvs.subresource_srv);
 		}
 		if (vb_atl.IsValid())
 		{
-			vb_atl.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_atl.offset, vb_atl.size);
+			vb_atl.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_atl.offset, vb_atl.size, &Vertex_TEX::FORMAT);
 			vb_atl.descriptor_srv = device->GetDescriptorIndex(&generalBuffer, SubresourceType::SRV, vb_atl.subresource_srv);
 		}
 		if (vb_col.IsValid())
 		{
-			vb_col.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_col.offset, vb_col.size);
+			vb_col.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_col.offset, vb_col.size, &Vertex_COL::FORMAT);
 			vb_col.descriptor_srv = device->GetDescriptorIndex(&generalBuffer, SubresourceType::SRV, vb_col.subresource_srv);
 		}
 		if (vb_bon.IsValid())
 		{
 			vb_bon.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_bon.offset, vb_bon.size);
 			vb_bon.descriptor_srv = device->GetDescriptorIndex(&generalBuffer, SubresourceType::SRV, vb_bon.subresource_srv);
+		}
+		if (vb_mor.IsValid())
+		{
+			vb_mor.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_mor.offset, vb_mor.size, &morph_format);
+			vb_mor.descriptor_srv = device->GetDescriptorIndex(&generalBuffer, SubresourceType::SRV, vb_mor.subresource_srv);
+		}
+
+		if (!vertex_boneindices.empty() || !morph_targets.empty())
+		{
+			CreateStreamoutRenderData();
 		}
 	}
 	void MeshComponent::CreateStreamoutRenderData()
@@ -673,14 +1032,17 @@ namespace wi::scene
 		GPUBufferDesc desc;
 		desc.usage = Usage::DEFAULT;
 		desc.bind_flags = BindFlag::VERTEX_BUFFER | BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-		desc.misc_flags = ResourceMiscFlag::BUFFER_RAW;
+		desc.misc_flags = ResourceMiscFlag::BUFFER_RAW | ResourceMiscFlag::TYPED_FORMAT_CASTING | ResourceMiscFlag::NO_DEFAULT_DESCRIPTORS;
 		if (device->CheckCapability(GraphicsDeviceCapability::RAYTRACING))
 		{
 			desc.misc_flags |= ResourceMiscFlag::RAY_TRACING;
 		}
-		const uint64_t alignment = device->GetMinOffsetAlignment(&desc);
+
+		const uint64_t alignment = device->GetMinOffsetAlignment(&desc) * sizeof(Vertex_POS32); // additional alignment for RGB32F
 		desc.size =
-			AlignTo(vertex_positions.size() * sizeof(Vertex_POS) * 2, alignment) + // *2 because prevpos also goes into this!
+			AlignTo(vertex_positions.size() * sizeof(Vertex_POS32), alignment) + // pos
+			AlignTo(vertex_positions.size() * sizeof(Vertex_POS32), alignment) + // prevpos
+			AlignTo(vertex_normals.size() * sizeof(Vertex_NOR), alignment) +
 			AlignTo(vertex_tangents.size() * sizeof(Vertex_TAN), alignment)
 			;
 
@@ -690,32 +1052,43 @@ namespace wi::scene
 
 		uint64_t buffer_offset = 0ull;
 
-		so_pos_nor_wind.offset = buffer_offset;
-		so_pos_nor_wind.size = vb_pos_nor_wind.size;
-		buffer_offset += AlignTo(so_pos_nor_wind.size, alignment);
-		so_pos_nor_wind.subresource_srv = device->CreateSubresource(&streamoutBuffer, SubresourceType::SRV, so_pos_nor_wind.offset, so_pos_nor_wind.size);
-		so_pos_nor_wind.subresource_uav = device->CreateSubresource(&streamoutBuffer, SubresourceType::UAV, so_pos_nor_wind.offset, so_pos_nor_wind.size);
-		so_pos_nor_wind.descriptor_srv = device->GetDescriptorIndex(&streamoutBuffer, SubresourceType::SRV, so_pos_nor_wind.subresource_srv);
-		so_pos_nor_wind.descriptor_uav = device->GetDescriptorIndex(&streamoutBuffer, SubresourceType::UAV, so_pos_nor_wind.subresource_uav);
+		so_pos.offset = buffer_offset;
+		so_pos.size = vertex_positions.size() * sizeof(Vertex_POS32);
+		buffer_offset += AlignTo(so_pos.size, alignment);
+		so_pos.subresource_srv = device->CreateSubresource(&streamoutBuffer, SubresourceType::SRV, so_pos.offset, so_pos.size, &Vertex_POS32::FORMAT);
+		so_pos.subresource_uav = device->CreateSubresource(&streamoutBuffer, SubresourceType::UAV, so_pos.offset, so_pos.size); // UAV can't have RGB32_F format!
+		so_pos.descriptor_srv = device->GetDescriptorIndex(&streamoutBuffer, SubresourceType::SRV, so_pos.subresource_srv);
+		so_pos.descriptor_uav = device->GetDescriptorIndex(&streamoutBuffer, SubresourceType::UAV, so_pos.subresource_uav);
+
+		so_pre.offset = buffer_offset;
+		so_pre.size = so_pos.size;
+		buffer_offset += AlignTo(so_pre.size, alignment);
+		so_pre.subresource_srv = device->CreateSubresource(&streamoutBuffer, SubresourceType::SRV, so_pre.offset, so_pre.size, &Vertex_POS32::FORMAT);
+		so_pre.subresource_uav = device->CreateSubresource(&streamoutBuffer, SubresourceType::UAV, so_pre.offset, so_pre.size); // UAV can't have RGB32_F format!
+		so_pre.descriptor_srv = device->GetDescriptorIndex(&streamoutBuffer, SubresourceType::SRV, so_pre.subresource_srv);
+		so_pre.descriptor_uav = device->GetDescriptorIndex(&streamoutBuffer, SubresourceType::UAV, so_pre.subresource_uav);
+
+		if (vb_nor.IsValid())
+		{
+			so_nor.offset = buffer_offset;
+			so_nor.size = vb_nor.size;
+			buffer_offset += AlignTo(so_nor.size, alignment);
+			so_nor.subresource_srv = device->CreateSubresource(&streamoutBuffer, SubresourceType::SRV, so_nor.offset, so_nor.size, &Vertex_NOR::FORMAT);
+			so_nor.subresource_uav = device->CreateSubresource(&streamoutBuffer, SubresourceType::UAV, so_nor.offset, so_nor.size, &Vertex_NOR::FORMAT);
+			so_nor.descriptor_srv = device->GetDescriptorIndex(&streamoutBuffer, SubresourceType::SRV, so_nor.subresource_srv);
+			so_nor.descriptor_uav = device->GetDescriptorIndex(&streamoutBuffer, SubresourceType::UAV, so_nor.subresource_uav);
+		}
 
 		if (vb_tan.IsValid())
 		{
 			so_tan.offset = buffer_offset;
 			so_tan.size = vb_tan.size;
 			buffer_offset += AlignTo(so_tan.size, alignment);
-			so_tan.subresource_srv = device->CreateSubresource(&streamoutBuffer, SubresourceType::SRV, so_tan.offset, so_tan.size);
-			so_tan.subresource_uav = device->CreateSubresource(&streamoutBuffer, SubresourceType::UAV, so_tan.offset, so_tan.size);
+			so_tan.subresource_srv = device->CreateSubresource(&streamoutBuffer, SubresourceType::SRV, so_tan.offset, so_tan.size, &Vertex_TAN::FORMAT);
+			so_tan.subresource_uav = device->CreateSubresource(&streamoutBuffer, SubresourceType::UAV, so_tan.offset, so_tan.size, &Vertex_TAN::FORMAT);
 			so_tan.descriptor_srv = device->GetDescriptorIndex(&streamoutBuffer, SubresourceType::SRV, so_tan.subresource_srv);
 			so_tan.descriptor_uav = device->GetDescriptorIndex(&streamoutBuffer, SubresourceType::UAV, so_tan.subresource_uav);
 		}
-
-		so_pre.offset = buffer_offset;
-		so_pre.size = vb_pos_nor_wind.size;
-		buffer_offset += AlignTo(so_pre.size, alignment);
-		so_pre.subresource_srv = device->CreateSubresource(&streamoutBuffer, SubresourceType::SRV, so_pre.offset, so_pre.size);
-		so_pre.subresource_uav = device->CreateSubresource(&streamoutBuffer, SubresourceType::UAV, so_pre.offset, so_pre.size);
-		so_pre.descriptor_srv = device->GetDescriptorIndex(&streamoutBuffer, SubresourceType::SRV, so_pre.subresource_srv);
-		so_pre.descriptor_uav = device->GetDescriptorIndex(&streamoutBuffer, SubresourceType::UAV, so_pre.subresource_uav);
 	}
 	void MeshComponent::CreateRaytracingRenderData()
 	{
@@ -753,20 +1126,58 @@ namespace wi::scene
 				auto& geometry = desc.bottom_level.geometries.back();
 				geometry.type = RaytracingAccelerationStructureDesc::BottomLevel::Geometry::Type::TRIANGLES;
 				geometry.triangles.vertex_buffer = generalBuffer;
-				geometry.triangles.vertex_byte_offset = vb_pos_nor_wind.offset;
+				geometry.triangles.vertex_byte_offset = vb_pos_wind.offset;
 				geometry.triangles.index_buffer = generalBuffer;
 				geometry.triangles.index_format = GetIndexFormat();
 				geometry.triangles.index_count = subset.indexCount;
 				geometry.triangles.index_offset = ib.offset / GetIndexStride() + subset.indexOffset;
 				geometry.triangles.vertex_count = (uint32_t)vertex_positions.size();
-				geometry.triangles.vertex_format = Format::R32G32B32_FLOAT;
-				geometry.triangles.vertex_stride = sizeof(MeshComponent::Vertex_POS);
+				if (so_pos.IsValid())
+				{
+					geometry.triangles.vertex_format = Vertex_POS32::FORMAT;
+					geometry.triangles.vertex_stride = sizeof(Vertex_POS32);
+				}
+				else
+				{
+					geometry.triangles.vertex_format = position_format == Format::R32G32B32A32_FLOAT ? Format::R32G32B32_FLOAT : position_format;
+					geometry.triangles.vertex_stride = GetFormatStride(position_format);
+				}
 			}
 
 			bool success = device->CreateRaytracingAccelerationStructure(&desc, &BLASes[lod]);
 			assert(success);
 			device->SetName(&BLASes[lod], std::string("MeshComponent::BLAS[LOD" + std::to_string(lod) + "]").c_str());
 		}
+	}
+	void MeshComponent::BuildBVH()
+	{
+		bvh_leaf_aabbs.clear();
+		uint32_t first_subset = 0;
+		uint32_t last_subset = 0;
+		GetLODSubsetRange(0, first_subset, last_subset);
+		for (uint32_t subsetIndex = first_subset; subsetIndex < last_subset; ++subsetIndex)
+		{
+			assert(subsetIndex <= 0xFF); // must fit into 8 bits userdata packing
+			const MeshComponent::MeshSubset& subset = subsets[subsetIndex];
+			if (subset.indexCount == 0)
+				continue;
+			const uint32_t indexOffset = subset.indexOffset;
+			const uint32_t triangleCount = subset.indexCount / 3;
+			for (uint32_t triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex)
+			{
+				assert(triangleIndex <= 0xFFFFFF); // must fit into 24 bits userdata packing
+				const uint32_t i0 = indices[indexOffset + triangleIndex * 3 + 0];
+				const uint32_t i1 = indices[indexOffset + triangleIndex * 3 + 1];
+				const uint32_t i2 = indices[indexOffset + triangleIndex * 3 + 2];
+				const XMFLOAT3& p0 = vertex_positions[i0];
+				const XMFLOAT3& p1 = vertex_positions[i1];
+				const XMFLOAT3& p2 = vertex_positions[i2];
+				AABB aabb = wi::primitive::AABB(wi::math::Min(p0, wi::math::Min(p1, p2)), wi::math::Max(p0, wi::math::Max(p1, p2)));
+				aabb.userdata = (triangleIndex & 0xFFFFFF) | ((subsetIndex & 0xFF) << 24u);
+				bvh_leaf_aabbs.push_back(aabb);
+			}
+		}
+		bvh.Build(bvh_leaf_aabbs.data(), (uint32_t)bvh_leaf_aabbs.size());
 	}
 	void MeshComponent::ComputeNormals(COMPUTE_NORMALS compute)
 	{
@@ -1140,6 +1551,44 @@ namespace wi::scene
 		sphere.radius = aabb.getRadius();
 		return sphere;
 	}
+	size_t MeshComponent::GetMemoryUsageCPU() const
+	{
+		size_t size = 
+			vertex_positions.size() * sizeof(XMFLOAT3) +
+			vertex_normals.size() * sizeof(XMFLOAT3) +
+			vertex_tangents.size() * sizeof(XMFLOAT4) +
+			vertex_uvset_0.size() * sizeof(XMFLOAT2) +
+			vertex_uvset_1.size() * sizeof(XMFLOAT2) +
+			vertex_boneindices.size() * sizeof(XMUINT4) +
+			vertex_boneweights.size() * sizeof(XMFLOAT4) +
+			vertex_atlas.size() * sizeof(XMFLOAT2) +
+			vertex_colors.size() * sizeof(uint32_t) +
+			vertex_windweights.size() * sizeof(uint8_t) +
+			indices.size() * sizeof(uint32_t);
+
+		for (const MorphTarget& morph : morph_targets)
+		{
+			size +=
+				morph.vertex_positions.size() * sizeof(XMFLOAT3) +
+				morph.vertex_normals.size() * sizeof(XMFLOAT3) +
+				morph.sparse_indices_positions.size() * sizeof(uint32_t) +
+				morph.sparse_indices_normals.size() * sizeof(uint32_t);
+		}
+
+		size += GetMemoryUsageBVH();
+
+		return size;
+	}
+	size_t MeshComponent::GetMemoryUsageGPU() const
+	{
+		return generalBuffer.desc.size + streamoutBuffer.desc.size;
+	}
+	size_t MeshComponent::GetMemoryUsageBVH() const
+	{
+		return
+			bvh.allocation.capacity() +
+			bvh_leaf_aabbs.size() * sizeof(wi::primitive::AABB);
+	}
 
 	void ObjectComponent::ClearLightmap()
 	{
@@ -1151,13 +1600,6 @@ namespace wi::scene
 		SetLightmapRenderRequest(false);
 	}
 
-#if __has_include("OpenImageDenoise/oidn.hpp")
-#define OPEN_IMAGE_DENOISE
-#include "OpenImageDenoise/oidn.hpp"
-#pragma comment(lib,"OpenImageDenoise.lib")
-#pragma comment(lib,"tbb.lib")
-	// Also provide OpenImageDenoise.dll and tbb.dll near the exe!
-#endif
 	void ObjectComponent::SaveLightmap()
 	{
 		if (lightmap.IsValid() && has_flag(lightmap.desc.bind_flags, BindFlag::RENDER_TARGET))
@@ -1186,10 +1628,15 @@ namespace wi::scene
 						init = true;
 					}
 
+					oidn::BufferRef lightmapTextureData_buffer = device.newBuffer(lightmapTextureData.size());
+					oidn::BufferRef texturedata_dst_buffer = device.newBuffer(texturedata_dst.size());
+
+					lightmapTextureData_buffer.write(0, lightmapTextureData.size(), lightmapTextureData.data());
+
 					// Create a denoising filter
 					oidn::FilterRef filter = device.newFilter("RTLightmap");
-					filter.setImage("color", lightmapTextureData.data(), oidn::Format::Float3, width, height, 0, sizeof(XMFLOAT4));
-					filter.setImage("output", texturedata_dst.data(), oidn::Format::Float3, width, height, 0, sizeof(XMFLOAT4));
+					filter.setImage("color", lightmapTextureData_buffer, oidn::Format::Float3, width, height, 0, sizeof(XMFLOAT4));
+					filter.setImage("output", texturedata_dst_buffer, oidn::Format::Float3, width, height, 0, sizeof(XMFLOAT4));
 					filter.commit();
 
 					// Filter the image
@@ -1201,6 +1648,10 @@ namespace wi::scene
 					if (error != oidn::Error::None && error != oidn::Error::Cancelled)
 					{
 						wi::backlog::post(std::string("[OpenImageDenoise error] ") + errorMessage);
+					}
+					else
+					{
+						texturedata_dst_buffer.read(0, texturedata_dst.size(), texturedata_dst.data());
 					}
 				}
 
@@ -1216,93 +1667,88 @@ namespace wi::scene
 	}
 	void ObjectComponent::CompressLightmap()
 	{
-
-		// BC6 Block compression code that uses DirectXTex library, but it's not cross platform, so disabled:
-#if 0
-		wi::Timer timer;
-		wi::backlog::post("compressing lightmap...");
-
-		lightmap.desc.Format = lightmap_block_format;
-		lightmap.desc.BindFlags = BindFlag::SHADER_RESOURCE;
-
-		static constexpr wi::graphics::FORMAT lightmap_block_format = wi::graphics::FORMAT_BC6H_UF16;
-		static constexpr uint32_t lightmap_blocksize = wi::graphics::GetFormatBlockSize(lightmap_block_format);
-		static_assert(lightmap_blocksize == 4u);
-		const uint32_t bc6_width = lightmapWidth / lightmap_blocksize;
-		const uint32_t bc6_height = lightmapHeight / lightmap_blocksize;
-		wi::vector<uint8_t> bc6_data;
-		bc6_data.resize(sizeof(XMFLOAT4) * bc6_width * bc6_height);
-		const XMFLOAT4* raw_data = (const XMFLOAT4*)lightmapTextureData.data();
-
-		for (uint32_t x = 0; x < bc6_width; ++x)
+		if (IsLightmapDisableBlockCompression())
 		{
-			for (uint32_t y = 0; y < bc6_height; ++y)
+			// Simple packing to R11G11B10_FLOAT format on CPU:
+			using namespace PackedVector;
+			wi::vector<uint8_t> packed_data;
+			packed_data.resize(sizeof(XMFLOAT3PK) * lightmapWidth * lightmapHeight);
+			XMFLOAT3PK* packed_ptr = (XMFLOAT3PK*)packed_data.data();
+			XMFLOAT4* raw_ptr = (XMFLOAT4*)lightmapTextureData.data();
+
+			uint32_t texelcount = lightmapWidth * lightmapHeight;
+			for (uint32_t i = 0; i < texelcount; ++i)
 			{
-				uint32_t bc6_idx = x + y * bc6_width;
-				uint8_t* ptr = (uint8_t*)((XMFLOAT4*)bc6_data.data() + bc6_idx);
-
-				XMVECTOR raw_vec[lightmap_blocksize * lightmap_blocksize];
-				for (uint32_t i = 0; i < lightmap_blocksize; ++i)
-				{
-					for (uint32_t j = 0; j < lightmap_blocksize; ++j)
-					{
-						uint32_t raw_idx = (x * lightmap_blocksize + i) + (y * lightmap_blocksize + j) * lightmapWidth;
-						uint32_t block_idx = i + j * lightmap_blocksize;
-						raw_vec[block_idx] = XMLoadFloat4(raw_data + raw_idx);
-					}
-				}
-				static_assert(arraysize(raw_vec) == 16); // it will work only for a certain block size!
-				D3DXEncodeBC6HU(ptr, raw_vec, 0);
+				XMStoreFloat3PK(packed_ptr + i, XMLoadFloat4(raw_ptr + i));
 			}
+
+			lightmapTextureData = std::move(packed_data);
+			lightmap.desc.format = Format::R11G11B10_FLOAT;
+			lightmap.desc.bind_flags = BindFlag::SHADER_RESOURCE;
 		}
-
-		lightmapTextureData = std::move(bc6_data); // replace old (raw) data with compressed data
-
-		wi::backlog::post(
-			"compressing lightmap [" +
-			std::to_string(lightmapWidth) +
-			"x" +
-			std::to_string(lightmapHeight) +
-			"] finished in " +
-			std::to_string(timer.elapsed_seconds()) +
-			" seconds"
-		);
-#else
-
-		// Simple compression to R11G11B10_FLOAT format:
-		using namespace PackedVector;
-		wi::vector<uint8_t> packed_data;
-		packed_data.resize(sizeof(XMFLOAT3PK) * lightmapWidth * lightmapHeight);
-		XMFLOAT3PK* packed_ptr = (XMFLOAT3PK*)packed_data.data();
-		XMFLOAT4* raw_ptr = (XMFLOAT4*)lightmapTextureData.data();
-
-		uint32_t texelcount = lightmapWidth * lightmapHeight;
-		for (uint32_t i = 0; i < texelcount; ++i)
+		else
 		{
-			XMStoreFloat3PK(packed_ptr + i, XMLoadFloat4(raw_ptr + i));
+			// BC6 compress on GPU:
+			wi::texturehelper::CreateTexture(lightmap, lightmapTextureData.data(), lightmapWidth, lightmapHeight, lightmap.desc.format);
+			TextureDesc desc = lightmap.desc;
+			desc.format = Format::BC6H_UF16;
+			desc.bind_flags = BindFlag::SHADER_RESOURCE;
+			Texture bc6tex;
+			GraphicsDevice* device = GetDevice();
+			device->CreateTexture(&desc, nullptr, &bc6tex);
+			CommandList cmd = device->BeginCommandList();
+			wi::renderer::BlockCompress(lightmap, bc6tex, cmd);
+			wi::helper::saveTextureToMemory(bc6tex, lightmapTextureData); // internally waits for GPU completion
+			lightmap.desc = desc;
 		}
-
-		lightmapTextureData = std::move(packed_data);
-		lightmap.desc.format = Format::R11G11B10_FLOAT;
-		lightmap.desc.bind_flags = BindFlag::SHADER_RESOURCE;
-
-#endif
 	}
 
-	void ArmatureComponent::CreateRenderData()
+	void EnvironmentProbeComponent::CreateRenderData()
 	{
+		if (!textureName.empty() && !resource.IsValid())
+		{
+			resource = wi::resourcemanager::Load(textureName);
+		}
+		if (resource.IsValid())
+		{
+			texture = resource.GetTexture();
+			SetDirty(false);
+			return;
+		}
+		resolution = wi::math::GetNextPowerOfTwo(resolution);
+		if (texture.IsValid() && resolution == texture.desc.width)
+			return;
+		SetDirty();
+
 		GraphicsDevice* device = wi::graphics::GetDevice();
 
-		GPUBufferDesc bd;
-		bd.size = sizeof(ShaderTransform) * (uint32_t)boneCollection.size();
-		bd.bind_flags = BindFlag::SHADER_RESOURCE;
-		bd.misc_flags = ResourceMiscFlag::BUFFER_RAW;
-		bd.stride = sizeof(ShaderTransform);
-
-		bool success = device->CreateBuffer(&bd, nullptr, &boneBuffer);
-		assert(success);
-		device->SetName(&boneBuffer, "ArmatureComponent::boneBuffer");
-		descriptor_srv = device->GetDescriptorIndex(&boneBuffer, SubresourceType::SRV);
+		TextureDesc desc;
+		desc.array_size = 6;
+		desc.height = resolution;
+		desc.width = resolution;
+		desc.usage = Usage::DEFAULT;
+		desc.format = Format::BC6H_UF16;
+		desc.sample_count = 1; // Note that this texture is always non-MSAA, even if probe is rendered as MSAA, because this contains resolved result
+		desc.bind_flags = BindFlag::SHADER_RESOURCE;
+		desc.mip_levels = GetMipCount(resolution, resolution, 1, 16);
+		desc.misc_flags = ResourceMiscFlag::TEXTURECUBE;
+		desc.layout = ResourceState::SHADER_RESOURCE;
+		device->CreateTexture(&desc, nullptr, &texture);
+		device->SetName(&texture, "EnvironmentProbeComponent::texture");
+	}
+	void EnvironmentProbeComponent::DeleteResource()
+	{
+		if (resource.IsValid())
+		{
+			// only delete these if resource is actually valid!
+			resource = {};
+			texture = {};
+			textureName = {};
+		}
+	}
+	size_t EnvironmentProbeComponent::GetMemorySizeInBytes() const
+	{
+		return ComputeTextureMemorySizeInBytes(texture.desc);
 	}
 
 	AnimationComponent::AnimationChannel::PathDataType AnimationComponent::AnimationChannel::GetPathDataType() const
@@ -1365,20 +1811,18 @@ namespace wi::scene
 	void SoftBodyPhysicsComponent::CreateFromMesh(const MeshComponent& mesh)
 	{
 		vertex_positions_simulation.resize(mesh.vertex_positions.size());
+		vertex_normals_simulation.resize(mesh.vertex_normals.size());
 		vertex_tangents_tmp.resize(mesh.vertex_tangents.size());
 		vertex_tangents_simulation.resize(mesh.vertex_tangents.size());
 
-		XMMATRIX W = XMLoadFloat4x4(&worldMatrix);
 		XMFLOAT3 _min = XMFLOAT3(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
 		XMFLOAT3 _max = XMFLOAT3(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
-		for (size_t i = 0; i < vertex_positions_simulation.size(); ++i)
+		XMMATRIX W = XMLoadFloat4x4(&worldMatrix);
+		for (size_t i = 0; i < mesh.vertex_positions.size(); ++i)
 		{
 			XMFLOAT3 pos = mesh.vertex_positions[i];
 			XMStoreFloat3(&pos, XMVector3Transform(XMLoadFloat3(&pos), W));
-			XMFLOAT3 nor = mesh.vertex_normals.empty() ? XMFLOAT3(1, 1, 1) : mesh.vertex_normals[i];
-			XMStoreFloat3(&nor, XMVector3Normalize(XMVector3TransformNormal(XMLoadFloat3(&nor), W)));
-			const uint8_t wind = mesh.vertex_windweights.empty() ? 0xFF : mesh.vertex_windweights[i];
-			vertex_positions_simulation[i].FromFULL(pos, nor, wind);
+			vertex_positions_simulation[i].FromFULL(pos);
 			_min = wi::math::Min(_min, pos);
 			_max = wi::math::Max(_max, pos);
 		}
@@ -1460,10 +1904,8 @@ namespace wi::scene
 
 		frustum.Create(_VP);
 	}
-	void CameraComponent::TransformCamera(const TransformComponent& transform)
+	void CameraComponent::TransformCamera(const XMMATRIX& W)
 	{
-		XMMATRIX W = XMLoadFloat4x4(&transform.world);
-
 		XMVECTOR _Eye = XMVector3Transform(XMVectorSet(0, 0, 0, 1), W);
 		XMVECTOR _At = XMVector3Normalize(XMVector3TransformNormal(XMVectorSet(0, 0, 1, 0), W));
 		XMVECTOR _Up = XMVector3Normalize(XMVector3TransformNormal(XMVectorSet(0, 1, 0, 0), W));
@@ -1483,6 +1925,8 @@ namespace wi::scene
 		XMVECTOR _At = XMLoadFloat3(&At);
 		XMVECTOR _Up = XMLoadFloat3(&Up);
 		XMMATRIX _Ref = XMMatrixReflect(XMLoadFloat4(&plane));
+
+		clipPlaneOriginal = plane;
 
 		// reverse clipping if behind clip plane ("if underwater")
 		clipPlane = plane;
@@ -1524,6 +1968,43 @@ namespace wi::scene
 		this->filename = filename;
 		resource = wi::resourcemanager::Load(filename, wi::resourcemanager::Flags::IMPORT_RETAIN_FILEDATA);
 		script.clear(); // will be created on first Update()
+	}
+
+	void SoundComponent::Play()
+	{
+		_flags |= PLAYING;
+		wi::audio::Play(&soundinstance);
+	}
+	void SoundComponent::Stop()
+	{
+		_flags &= ~PLAYING;
+		wi::audio::Stop(&soundinstance);
+	}
+	void SoundComponent::SetLooped(bool value)
+	{
+		soundinstance.SetLooped(value);
+		if (value)
+		{
+			_flags |= LOOPED;
+			wi::audio::CreateSoundInstance(&soundResource.GetSound(), &soundinstance);
+		}
+		else
+		{
+			_flags &= ~LOOPED;
+			wi::audio::ExitLoop(&soundinstance);
+		}
+	}
+	void SoundComponent::SetDisable3D(bool value)
+	{
+		if (value)
+		{
+			_flags |= DISABLE_3D;
+		}
+		else
+		{
+			_flags &= ~DISABLE_3D;
+		}
+		wi::audio::CreateSoundInstance(&soundResource.GetSound(), &soundinstance);
 	}
 
 }

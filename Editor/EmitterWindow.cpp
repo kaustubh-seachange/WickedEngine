@@ -1,8 +1,5 @@
 #include "stdafx.h"
 #include "EmitterWindow.h"
-#include "Editor.h"
-
-#include <string>
 
 using namespace wi::ecs;
 using namespace wi::scene;
@@ -11,7 +8,7 @@ void EmitterWindow::Create(EditorComponent* _editor)
 {
 	editor = _editor;
 	wi::gui::Window::Create(ICON_EMITTER " Emitter", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE);
-	SetSize(XMFLOAT2(300, 940));
+	SetSize(XMFLOAT2(300, 980));
 
 	closeButton.SetTooltip("Delete EmittedParticleSystem");
 	OnClose([=](wi::gui::EventArgs args) {
@@ -151,14 +148,10 @@ void EmitterWindow::Create(EditorComponent* _editor)
 	debugCheckBox.SetPos(XMFLOAT2(x, y += step));
 	debugCheckBox.SetSize(XMFLOAT2(itemheight, itemheight));
 	debugCheckBox.OnClick([&](wi::gui::EventArgs args) {
-		auto emitter = GetEmitter();
-		if (emitter != nullptr)
-		{
-			emitter->SetDebug(args.bValue);
-		}
+		wi::renderer::SetToDrawDebugEmitters(args.bValue);
 	});
-	debugCheckBox.SetCheck(false);
-	debugCheckBox.SetTooltip("Currently this has no functionality.");
+	debugCheckBox.SetCheck(wi::renderer::GetToDrawDebugEmitters());
+	debugCheckBox.SetTooltip("Toggle debug visualizer for emitters.");
 	AddWidget(&debugCheckBox);
 
 
@@ -190,6 +183,36 @@ void EmitterWindow::Create(EditorComponent* _editor)
 	frameBlendingCheckBox.SetCheck(false);
 	frameBlendingCheckBox.SetTooltip("If sprite sheet animation is in effect, frames will be smoothly blended.");
 	AddWidget(&frameBlendingCheckBox);
+
+
+	collidersDisabledCheckBox.Create("Colliders disabled: ");
+	collidersDisabledCheckBox.SetPos(XMFLOAT2(x, y += step));
+	collidersDisabledCheckBox.SetSize(XMFLOAT2(itemheight, itemheight));
+	collidersDisabledCheckBox.OnClick([&](wi::gui::EventArgs args) {
+		auto emitter = GetEmitter();
+		if (emitter != nullptr)
+		{
+			emitter->SetCollidersDisabled(args.bValue);
+		}
+		});
+	collidersDisabledCheckBox.SetCheck(false);
+	collidersDisabledCheckBox.SetTooltip("Simply disables all colliders for acting on this particle system");
+	AddWidget(&collidersDisabledCheckBox);
+
+
+	takeColorCheckBox.Create("Take color from mesh: ");
+	takeColorCheckBox.SetPos(XMFLOAT2(x, y += step));
+	takeColorCheckBox.SetSize(XMFLOAT2(itemheight, itemheight));
+	takeColorCheckBox.OnClick([&](wi::gui::EventArgs args) {
+		auto emitter = GetEmitter();
+		if (emitter != nullptr)
+		{
+			emitter->SetTakeColorFromMesh(args.bValue);
+		}
+		});
+	takeColorCheckBox.SetCheck(false);
+	takeColorCheckBox.SetTooltip("If it emits from a mesh, then particle color will be taken from mesh material surface.");
+	AddWidget(&takeColorCheckBox);
 
 
 
@@ -666,6 +689,8 @@ void EmitterWindow::SetEntity(Entity entity)
 		pauseCheckBox.SetCheck(emitter->IsPaused());
 		volumeCheckBox.SetCheck(emitter->IsVolumeEnabled());
 		frameBlendingCheckBox.SetCheck(emitter->IsFrameBlendingEnabled());
+		collidersDisabledCheckBox.SetCheck(emitter->IsCollidersDisabled());
+		takeColorCheckBox.SetCheck(emitter->IsTakeColorFromMesh());
 		maxParticlesSlider.SetValue((float)emitter->GetMaxParticleCount());
 
 		frameRateInput.SetValue(emitter->frameRate);
@@ -700,7 +725,6 @@ void EmitterWindow::SetEntity(Entity entity)
 		sph_p0_Slider.SetValue(emitter->SPH_p0);
 		sph_e_Slider.SetValue(emitter->SPH_e);
 
-		debugCheckBox.SetCheck(emitter->IsDebug());
 	}
 	else
 	{
@@ -709,6 +733,7 @@ void EmitterWindow::SetEntity(Entity entity)
 		SetEnabled(false);
 
 	}
+	debugCheckBox.SetCheck(wi::renderer::GetToDrawDebugEmitters());
 
 }
 
@@ -753,7 +778,7 @@ void EmitterWindow::UpdateData()
 
 	std::string ss;
 	ss += "Emitter Mesh: " + (meshName != nullptr ? meshName->name : "NO EMITTER MESH") + " (" + std::to_string(emitter->meshID) + ")\n";
-	ss += "Memory usage: " + std::to_string(emitter->GetMemorySizeInBytes() / 1024.0f / 1024.0f) + " MB\n";
+	ss += "Memory usage: " + wi::helper::GetMemorySizeText(emitter->GetMemorySizeInBytes()) + "\n";
 	ss += "\n";
 
 	auto data = emitter->GetStatistics();
@@ -814,6 +839,8 @@ void EmitterWindow::ResizeLayout()
 	add_right(debugCheckBox);
 	add_right(volumeCheckBox);
 	add_right(frameBlendingCheckBox);
+	add_right(collidersDisabledCheckBox);
+	add_right(takeColorCheckBox);
 	add(maxParticlesSlider);
 	add(emitCountSlider);
 	add(emitSizeSlider);

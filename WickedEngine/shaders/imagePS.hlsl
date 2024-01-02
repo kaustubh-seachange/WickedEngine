@@ -26,6 +26,10 @@ float4 main(VertextoPixel input) : SV_TARGET
 	{
 		mask = bindless_textures[image.texture_mask_index].Sample(sam, uvsets.zw);
 	}
+
+	const float2 mask_alpha_range = unpack_half2(image.mask_alpha_range);
+	mask.a = smoothstep(mask_alpha_range.x, mask_alpha_range.y, mask.a);
+	
 	color *= mask;
 
 	[branch]
@@ -49,7 +53,7 @@ float4 main(VertextoPixel input) : SV_TARGET
 	}
 	else if (image.flags & IMAGE_FLAG_OUTPUT_COLOR_SPACE_LINEAR)
 	{
-		color.rgb = DEGAMMA(color.rgb);
+		color.rgb = RemoveSRGBCurve_Fast(color.rgb);
 		color.rgb *= image.hdr_scaling;
 	}
 

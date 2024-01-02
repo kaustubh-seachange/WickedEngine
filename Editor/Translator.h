@@ -1,8 +1,4 @@
 #pragma once
-#include "CommonInclude.h"
-#include "wiCanvas.h"
-#include "wiVector.h"
-#include "wiUnorderedSet.h"
 
 class Translator
 {
@@ -34,6 +30,7 @@ public:
 	float scale_snap = 1;
 	float rotate_snap = XM_PIDIV4;
 	float translate_snap = 1;
+	float opacity = 1;
 
 	enum TRANSLATOR_STATE
 	{

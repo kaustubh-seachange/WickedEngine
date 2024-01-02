@@ -7,9 +7,7 @@
 #include "wiColor.h"
 #include "wiHairParticle.h"
 
-#include <random>
-#include <string>
-#include <atomic>
+#include <memory>
 
 namespace wi::terrain
 {
@@ -46,84 +44,116 @@ namespace wi::terrain
 	static constexpr float chunk_width_rcp = 1.0f / (chunk_width - 1);
 	static constexpr uint32_t vertexCount = chunk_width * chunk_width;
 
-	struct GPUPageAllocator
+	struct VirtualTextureAtlas
 	{
-		size_t block_size = 0;
-		size_t page_size = 0;
-		wi::vector<wi::graphics::GPUBuffer> blocks;
-
-		struct Page
+		struct Map
 		{
-			uint16_t block = 0;			// index into blocks array
-			uint16_t index = 0xFFFF;	// index into block's pages
-			constexpr bool IsValid() const { return index < 0xFFFF; }
+			wi::graphics::Texture texture;
+			wi::graphics::Texture texture_raw_block;
 		};
-		wi::vector<Page> pages;
+		Map maps[3];
+		wi::graphics::GPUBuffer tile_pool;
 
-		void init(size_t block_size, size_t page_size);
-		void new_block();
-		Page allocate();
-		void free(Page page);
+		struct Tile
+		{
+			uint8_t x = 0xFF;
+			uint8_t y = 0xFF;
+			constexpr bool IsValid() const
+			{
+				return x != 0xFF && y != 0xFF;
+			}
+		};
+		wi::vector<Tile> free_tiles;
+
+		struct Residency
+		{
+			wi::graphics::Texture feedbackMap;
+			wi::graphics::Texture residencyMap;
+			wi::graphics::GPUBuffer requestBuffer;
+			wi::graphics::GPUBuffer allocationBuffer;
+			wi::graphics::GPUBuffer allocationBuffer_CPU_readback[wi::graphics::GraphicsDevice::GetBufferCount() + 1];
+			wi::graphics::GPUBuffer pageBuffer;
+			wi::graphics::GPUBuffer pageBuffer_CPU_upload[wi::graphics::GraphicsDevice::GetBufferCount() + 1];
+			bool data_available_CPU[wi::graphics::GraphicsDevice::GetBufferCount() + 1] = {};
+			int cpu_resource_id = 0;
+			uint32_t resolution = 0;
+
+			void init(uint32_t resolution);
+			void reset();
+		};
+		wi::unordered_map<uint32_t, wi::vector<std::shared_ptr<Residency>>> free_residencies; // per resolution residencies
+
+		Tile allocate_tile()
+		{
+			if (free_tiles.empty())
+				return {};
+			Tile tile = free_tiles.back();
+			free_tiles.pop_back();
+			return tile;
+		}
+		void free_tile(Tile& tile)
+		{
+			if (!tile.IsValid())
+				return;
+			free_tiles.push_back(tile);
+			tile = {};
+		}
+		std::shared_ptr<Residency> allocate_residency(uint32_t resolution)
+		{
+			if (free_residencies[resolution].empty())
+			{
+				std::shared_ptr<Residency> residency = std::make_shared<Residency>();
+				residency->init(resolution);
+				free_residencies[resolution].push_back(residency);
+			}
+			std::shared_ptr<Residency> residency = free_residencies[resolution].back();
+			free_residencies[resolution].pop_back();
+			residency->reset();
+			return residency;
+		}
+		void free_residency(std::shared_ptr<Residency>& residency)
+		{
+			if (residency == nullptr)
+				return;
+			free_residencies[residency->resolution].push_back(residency);
+			residency = {};
+		}
+		inline bool IsValid() const
+		{
+			return tile_pool.IsValid();
+		}
 	};
 
-//#define TERRAIN_VIRTUAL_TEXTURE_DEBUG
 	struct VirtualTexture
 	{
-		wi::graphics::Texture texture;
-		wi::graphics::Texture residencyMap;
-		wi::graphics::Texture feedbackMap;
-		wi::graphics::GPUBuffer requestBuffer;
-		wi::graphics::GPUBuffer allocationBuffer;
-		wi::graphics::GPUBuffer allocationBuffer_CPU_readback[wi::graphics::GraphicsDevice::GetBufferCount() + 1];
-		wi::graphics::GPUBuffer pageBuffer;
-		wi::graphics::GPUBuffer pageBuffer_CPU_upload[wi::graphics::GraphicsDevice::GetBufferCount() + 1];
-		bool data_available_CPU[wi::graphics::GraphicsDevice::GetBufferCount() + 1] = {};
-		int cpu_resource_id = 0;
-		wi::vector<GPUPageAllocator::Page> pages;
+		std::shared_ptr<VirtualTextureAtlas::Residency> residency;
+		wi::vector<VirtualTextureAtlas::Tile> tiles;
 		uint32_t lod_count = 0;
+		uint32_t resolution = 0;
 
-#ifdef TERRAIN_VIRTUAL_TEXTURE_DEBUG
-		uint32_t tile_allocation_count = 0;
-		uint32_t tile_deallocation_count = 0;
-		wi::graphics::Texture feedbackMap_CPU_readback[wi::graphics::GraphicsDevice::GetBufferCount() + 1];
-		wi::graphics::Texture residencyMap_CPU_readback[wi::graphics::GraphicsDevice::GetBufferCount() + 1];
-		wi::graphics::GPUBuffer requestBuffer_CPU_readback[wi::graphics::GraphicsDevice::GetBufferCount() + 1];
-#endif // TERRAIN_VIRTUAL_TEXTURE_DEBUG
+		void init(VirtualTextureAtlas& atlas, uint resolution);
 
-		void init(GPUPageAllocator& page_allocator, const wi::graphics::TextureDesc& desc);
-
-		void free(GPUPageAllocator& page_allocator)
+		void free(VirtualTextureAtlas& atlas)
 		{
-			for (auto& page : pages)
+			for (auto& tile : tiles)
 			{
-				page_allocator.free(page);
-				page = {};
+				atlas.free_tile(tile);
 			}
+			tiles.clear();
+			atlas.free_residency(residency);
 		}
-
-		void DrawDebug(wi::graphics::CommandList cmd);
 
 		// Attach this data to Virtual Texture because we will record these by separate CPU thread:
 		struct UpdateRequest
 		{
+			uint16_t x = 0;
+			uint16_t y = 0;
 			uint16_t lod = 0;
 			uint8_t tile_x = 0;
 			uint8_t tile_y = 0;
 		};
 		mutable wi::vector<UpdateRequest> update_requests;
 		wi::graphics::Texture region_weights_texture;
-		uint32_t map_type = 0;
-
-		void SparseMap(GPUPageAllocator& allocator, GPUPageAllocator::Page page, uint32_t x, uint32_t y, uint32_t mip);
-		void SparseFlush(GPUPageAllocator& allocator);
-
-	private:
-		wi::vector<wi::graphics::SparseResourceCoordinate> sparse_coordinate;
-		wi::vector<wi::graphics::SparseRegionSize> sparse_size;
-		wi::vector<wi::graphics::TileRangeFlags> tile_range_flags;
-		wi::vector<uint32_t> tile_range_offset;
-		wi::vector<uint32_t> tile_range_count;
-		uint32_t last_block = 0;
 	};
 
 	struct ChunkData
@@ -140,8 +170,7 @@ namespace wi::terrain
 		wi::primitive::Sphere sphere;
 		XMFLOAT3 position = XMFLOAT3(0, 0, 0);
 		bool visible = true;
-
-		wi::vector<VirtualTexture> vt;
+		std::shared_ptr<VirtualTexture> vt;
 	};
 
 	struct Prop
@@ -173,6 +202,7 @@ namespace wi::terrain
 			GRASS = 1 << 2,
 			GENERATION_STARTED = 1 << 4,
 			PHYSICS = 1 << 5,
+			TESSELLATION = 1 << 6,
 		};
 		uint32_t _flags = CENTER_TO_CAM | REMOVAL | GRASS;
 
@@ -199,20 +229,22 @@ namespace wi::terrain
 		wi::vector<wi::graphics::GPUBarrier> virtual_texture_barriers_before_allocation;
 		wi::vector<wi::graphics::GPUBarrier> virtual_texture_barriers_after_allocation;
 		wi::vector<const VirtualTexture*> virtual_textures_in_use;
-		GPUPageAllocator page_allocator;
 		wi::graphics::Sampler sampler;
+		VirtualTextureAtlas atlas;
 
 		constexpr bool IsCenterToCamEnabled() const { return _flags & CENTER_TO_CAM; }
 		constexpr bool IsRemovalEnabled() const { return _flags & REMOVAL; }
 		constexpr bool IsGrassEnabled() const { return _flags & GRASS; }
 		constexpr bool IsGenerationStarted() const { return _flags & GENERATION_STARTED; }
 		constexpr bool IsPhysicsEnabled() const { return _flags & PHYSICS; }
+		constexpr bool IsTessellationEnabled() const { return _flags & TESSELLATION; }
 
 		constexpr void SetCenterToCamEnabled(bool value) { if (value) { _flags |= CENTER_TO_CAM; } else { _flags &= ~CENTER_TO_CAM; } }
 		constexpr void SetRemovalEnabled(bool value) { if (value) { _flags |= REMOVAL; } else { _flags &= ~REMOVAL; } }
 		constexpr void SetGrassEnabled(bool value) { if (value) { _flags |= GRASS; } else { _flags &= ~GRASS; } }
 		constexpr void SetGenerationStarted(bool value) { if (value) { _flags |= GENERATION_STARTED; } else { _flags &= ~GENERATION_STARTED; } }
 		constexpr void SetPhysicsEnabled(bool value) { if (value) { _flags |= PHYSICS; } else { _flags &= ~PHYSICS; } }
+		constexpr void SetTessellationEnabled(bool value) { if (value) { _flags |= TESSELLATION; } else { _flags &= ~TESSELLATION; } }
 
 		float lod_multiplier = 0.005f;
 		int generation = 12;
@@ -358,11 +390,20 @@ namespace wi::terrain
 			XMFLOAT2 p = world_pos;
 			p.x *= frequency;
 			p.y *= frequency;
-			XMFLOAT2 pixel = XMFLOAT2(p.x + width * 0.5f, p.y + this->height * 0.5f);
-			if (pixel.x >= 0 && pixel.x < width && pixel.y >= 0 && pixel.y < this->height)
+			XMFLOAT2 pixel = XMFLOAT2(p.x + this->width * 0.5f, p.y + this->height * 0.5f);
+			if (pixel.x >= 0 && pixel.x < this->width && pixel.y >= 0 && pixel.y < this->height)
 			{
-				const int idx = int(pixel.x) + int(pixel.y) * width;
-				Blend(height, ((float)data[idx] / 255.0f) * scale);
+				const int idx = int(pixel.x) + int(pixel.y) * this->width;
+				float value = 0;
+				if (data.size() == this->width * this->height * sizeof(uint8_t))
+				{
+					value = ((float)data[idx] / 255.0f);
+				}
+				else if (data.size() == this->width * this->height * sizeof(uint16_t))
+				{
+					value = ((float)((uint16_t*)data.data())[idx] / 65535.0f);
+				}
+				Blend(height, value * scale);
 			}
 		}
 	};

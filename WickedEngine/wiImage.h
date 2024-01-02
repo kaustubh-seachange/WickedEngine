@@ -56,6 +56,7 @@ namespace wi::image
 			OUTPUT_COLOR_SPACE_HDR10_ST2084 = 1 << 6,
 			OUTPUT_COLOR_SPACE_LINEAR = 1 << 7,
 			CORNER_ROUNDING = 1 << 8,
+			DEPTH_TEST = 1 << 9,
 		};
 		uint32_t _flags = EMPTY;
 
@@ -71,7 +72,10 @@ namespace wi::image
 		float rotation = 0;
 		float fade = 0;
 		float opacity = 1;
+		float intensity = 1;
 		float hdr_scaling = 1.0f; // a scaling value for use by linear output mapping
+		float mask_alpha_range_start = 0; // constrain mask alpha to not go below this level
+		float mask_alpha_range_end = 1; // constrain mask alpha to not go above this level
 
 		// you can deform the image by its corners (0: top left, 1: top right, 2: bottom left, 3: bottom right)
 		XMFLOAT2 corners[4] = {
@@ -97,6 +101,8 @@ namespace wi::image
 		QUALITY quality = QUALITY_LINEAR;
 
 		const wi::graphics::Texture* maskMap = nullptr;
+		int image_subresource = -1;
+		int mask_subresource = -1;
 
 		// Set a mask map that will be used to multiply the base image
 		constexpr void setMaskMap(const wi::graphics::Texture* tex) { maskMap = tex; }
@@ -110,6 +116,7 @@ namespace wi::image
 		constexpr bool isHDR10OutputMappingEnabled() const { return _flags & OUTPUT_COLOR_SPACE_HDR10_ST2084; }
 		constexpr bool isLinearOutputMappingEnabled() const { return _flags & OUTPUT_COLOR_SPACE_LINEAR; }
 		constexpr bool isCornerRoundingEnabled() const { return _flags & CORNER_ROUNDING; }
+		constexpr bool isDepthTestEnabled() const { return _flags & DEPTH_TEST; }
 
 		// enables draw rectangle for base texture (cutout texture outside draw rectangle)
 		constexpr void enableDrawRect(const XMFLOAT4& rect) { _flags |= DRAWRECT; drawRect = rect; }
@@ -128,7 +135,8 @@ namespace wi::image
 		constexpr void enableHDR10OutputMapping() { _flags |= OUTPUT_COLOR_SPACE_HDR10_ST2084; }
 		// enable linear output mapping, which means removing gamma curve and outputting in linear space (useful for blending in HDR space)
 		constexpr void enableLinearOutputMapping(float scaling = 1.0f) { _flags |= OUTPUT_COLOR_SPACE_LINEAR; hdr_scaling = scaling; }
-		constexpr void enableCornerRounding(float scaling = 1.0f) { _flags |= CORNER_ROUNDING; hdr_scaling = scaling; }
+		constexpr void enableCornerRounding() { _flags |= CORNER_ROUNDING; }
+		constexpr void enableDepthTest() { _flags |= DEPTH_TEST; }
 
 		// disable draw rectangle for base texture (whole texture will be drawn, no cutout)
 		constexpr void disableDrawRect() { _flags &= ~DRAWRECT; }
@@ -141,6 +149,7 @@ namespace wi::image
 		constexpr void disableHDR10OutputMapping() { _flags &= ~OUTPUT_COLOR_SPACE_HDR10_ST2084; }
 		constexpr void disableLinearOutputMapping() { _flags &= ~OUTPUT_COLOR_SPACE_LINEAR; }
 		constexpr void disableCornerRounding() { _flags &= ~CORNER_ROUNDING; }
+		constexpr void disableDepthTest() { _flags &= ~DEPTH_TEST; }
 
 		Params() = default;
 

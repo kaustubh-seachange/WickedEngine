@@ -16,8 +16,12 @@
 #include "wiImage.h"
 #include "wiEventHandler.h"
 
+#ifdef PLATFORM_PS5
+#include "wiGraphicsDevice_PS5.h"
+#else
 #include "wiGraphicsDevice_DX12.h"
 #include "wiGraphicsDevice_Vulkan.h"
+#endif // PLATFORM_PS5
 
 #include <string>
 #include <algorithm>
@@ -83,7 +87,7 @@ namespace wi
 			initialized = true;
 		}
 
-		wi::font::UpdateAtlas();
+		wi::font::UpdateAtlas(canvas.GetDPIScaling());
 
 		ColorSpace colorspace = graphicsDevice->GetSwapChainColorSpace(&swapChain);
 
@@ -105,7 +109,8 @@ namespace wi
 			return;
 		}
 
-		#ifdef WICKEDENGINE_BUILD_DX12
+#if 0
+#ifdef WICKEDENGINE_BUILD_DX12
 		static bool startup_workaround = false;
 		if (!startup_workaround)
 		{
@@ -117,21 +122,38 @@ namespace wi
 				graphicsDevice->SubmitCommandLists();
 			}
 		}
-		#endif // WICKEDENGINE_BUILD_DX12
+#endif // WICKEDENGINE_BUILD_DX12
+#endif
 
 		static bool startup_script = false;
 		if (!startup_script)
 		{
 			startup_script = true;
-			wi::lua::RegisterObject(wi::lua::Application_BindLua::className, "main", new wi::lua::Application_BindLua(this));
-			wi::lua::RegisterObject(wi::lua::Application_BindLua::className, "application", new wi::lua::Application_BindLua(this));
-			wi::lua::RunFile("startup.lua");
+			Luna<wi::lua::Application_BindLua>::push_global(wi::lua::GetLuaState(), "main", this);
+			Luna<wi::lua::Application_BindLua>::push_global(wi::lua::GetLuaState(), "application", this);
+			std::string startup_lua_filename = wi::helper::GetCurrentPath() + "/startup.lua";
+			if (wi::helper::FileExists(startup_lua_filename))
+			{
+				if (wi::lua::RunFile(startup_lua_filename))
+				{
+					wi::backlog::post("Executed startup file: " + startup_lua_filename);
+				}
+			}
+			std::string startup_luab_filename = wi::helper::GetCurrentPath() + "/startup.luab";
+			if (wi::helper::FileExists(startup_luab_filename))
+			{
+				if (wi::lua::RunBinaryFile(startup_luab_filename))
+				{
+					wi::backlog::post("Executed startup file: " + startup_luab_filename);
+				}
+			}
 		}
 
 		if (!is_window_active && !wi::arguments::HasArgument("alwaysactive"))
 		{
 			// If the application is not active, disable Update loops:
 			deltaTimeAccumulator = 0;
+			wi::helper::Sleep(10);
 			return;
 		}
 
@@ -139,14 +161,19 @@ namespace wi
 
 		deltaTime = float(std::max(0.0, timer.record_elapsed_seconds()));
 
+		const float target_deltaTime = 1.0f / targetFrameRate;
+		if (framerate_lock && deltaTime < target_deltaTime)
+		{
+			wi::helper::QuickSleep((target_deltaTime - deltaTime) * 1000);
+			deltaTime += float(std::max(0.0, timer.record_elapsed_seconds()));
+		}
+
 		wi::input::Update(window, canvas);
 
 		// Wake up the events that need to be executed on the main thread, in thread safe manner:
 		wi::eventhandler::FireEvent(wi::eventhandler::EVENT_THREAD_SAFE_POINT, 0);
 
-		const float dt = framerate_lock ? (1.0f / targetFrameRate) : deltaTime;
-
-		fadeManager.Update(dt);
+		fadeManager.Update(deltaTime);
 
 		if (GetActivePath() != nullptr)
 		{
@@ -160,7 +187,7 @@ namespace wi
 		{
 			if (frameskip)
 			{
-				deltaTimeAccumulator += dt;
+				deltaTimeAccumulator += deltaTime;
 				if (deltaTimeAccumulator > 10)
 				{
 					// application probably lost control, fixed update would take too long
@@ -182,7 +209,7 @@ namespace wi
 		wi::profiler::EndRange(range); // Fixed Update
 
 		// Variable-timed update:
-		Update(dt);
+		Update(deltaTime);
 
 		Render();
 
@@ -199,13 +226,28 @@ namespace wi
 		if (colorspace_conversion_required)
 		{
 			// In HDR10, we perform the compositing in a custom linear color space render target
-			graphicsDevice->RenderPassBegin(&renderpass, cmd);
+			if (!rendertarget.IsValid())
+			{
+				TextureDesc desc;
+				desc.width = swapChain.desc.width;
+				desc.height = swapChain.desc.height;
+				desc.format = Format::R11G11B10_FLOAT;
+				desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE;
+				bool success = graphicsDevice->CreateTexture(&desc, nullptr, &rendertarget);
+				assert(success);
+				graphicsDevice->SetName(&rendertarget, "Application::rendertarget");
+			}
+			RenderPassImage rp[] = {
+				RenderPassImage::RenderTarget(&rendertarget, RenderPassImage::LoadOp::CLEAR),
+			};
+			graphicsDevice->RenderPassBegin(rp, arraysize(rp), cmd);
 		}
 		else
 		{
 			// If swapchain is SRGB or Linear HDR, it can be used for blending
 			//	- If it is SRGB, the render path will ensure tonemapping to SDR
 			//	- If it is Linear HDR, we can blend trivially in linear space
+			rendertarget = {};
 			graphicsDevice->RenderPassBegin(&swapChain, cmd);
 		}
 		Compose(cmd);
@@ -305,28 +347,34 @@ namespace wi
 				infodisplay_str += "[64-bit]";
 #elif defined(_WIN32)
 				infodisplay_str += "[32-bit]";
-#endif
+#endif // _ARM
 
 #ifdef PLATFORM_UWP
 				infodisplay_str += "[UWP]";
-#endif
+#endif // PLATFORM_UWP
 
 #ifdef WICKEDENGINE_BUILD_DX12
 				if (dynamic_cast<GraphicsDevice_DX12*>(graphicsDevice.get()))
 				{
 					infodisplay_str += "[DX12]";
 				}
-#endif
+#endif // WICKEDENGINE_BUILD_DX12
 #ifdef WICKEDENGINE_BUILD_VULKAN
 				if (dynamic_cast<GraphicsDevice_Vulkan*>(graphicsDevice.get()))
 				{
 					infodisplay_str += "[Vulkan]";
 				}
-#endif
+#endif // WICKEDENGINE_BUILD_VULKAN
+#ifdef PLATFORM_PS5
+				if (dynamic_cast<GraphicsDevice_PS5*>(graphicsDevice.get()))
+				{
+					infodisplay_str += "[PS5]";
+				}
+#endif // PLATFORM_PS5
 
 #ifdef _DEBUG
 				infodisplay_str += "[DEBUG]";
-#endif
+#endif // _DEBUG
 				if (graphicsDevice->IsDebugDevice())
 				{
 					infodisplay_str += "[debugdevice]";
@@ -510,6 +558,17 @@ namespace wi
 				validationMode = ValidationMode::Verbose;
 			}
 
+			GPUPreference preference = GPUPreference::Discrete;
+			if (wi::arguments::HasArgument("igpu"))
+			{
+				preference = GPUPreference::Integrated;
+			}
+
+#ifdef PLATFORM_PS5
+			wi::renderer::SetShaderPath(wi::renderer::GetShaderPath() + "ps5/");
+			graphicsDevice = std::make_unique<GraphicsDevice_PS5>(validationMode);
+
+#else
 			bool use_dx12 = wi::arguments::HasArgument("dx12");
 			bool use_vulkan = wi::arguments::HasArgument("vulkan");
 
@@ -518,13 +577,13 @@ namespace wi
 				wi::helper::messageBox("The engine was built without DX12 support!", "Error");
 				use_dx12 = false;
 			}
-#endif
+#endif // WICKEDENGINE_BUILD_DX12
 #ifndef WICKEDENGINE_BUILD_VULKAN
 			if (use_vulkan) {
 				wi::helper::messageBox("The engine was built without Vulkan support!", "Error");
 				use_vulkan = false;
 			}
-#endif
+#endif // WICKEDENGINE_BUILD_VULKAN
 
 			if (!use_dx12 && !use_vulkan)
 			{
@@ -543,16 +602,21 @@ namespace wi
 			{
 #ifdef WICKEDENGINE_BUILD_VULKAN
 				wi::renderer::SetShaderPath(wi::renderer::GetShaderPath() + "spirv/");
-				graphicsDevice = std::make_unique<GraphicsDevice_Vulkan>(window, validationMode);
+				graphicsDevice = std::make_unique<GraphicsDevice_Vulkan>(window, validationMode, preference);
 #endif
 			}
 			else if (use_dx12)
 			{
 #ifdef WICKEDENGINE_BUILD_DX12
+#ifdef PLATFORM_XBOX
+				wi::renderer::SetShaderPath(wi::renderer::GetShaderPath() + "hlsl6_xs/");
+#else
 				wi::renderer::SetShaderPath(wi::renderer::GetShaderPath() + "hlsl6/");
-				graphicsDevice = std::make_unique<GraphicsDevice_DX12>(validationMode);
+#endif // PLATFORM_XBOX
+				graphicsDevice = std::make_unique<GraphicsDevice_DX12>(validationMode, preference);
 #endif
 			}
+#endif // PLATFORM_PS5
 		}
 		wi::graphics::GetDevice() = graphicsDevice.get();
 
@@ -568,13 +632,25 @@ namespace wi
 		{
 			// initialize for the first time
 			desc.buffer_count = 3;
-			desc.format = Format::R10G10B10A2_UNORM;
+			if (graphicsDevice->CheckCapability(GraphicsDeviceCapability::R9G9B9E5_SHAREDEXP_RENDERABLE))
+			{
+				desc.format = Format::R9G9B9E5_SHAREDEXP;
+			}
+			else
+			{
+				desc.format = Format::R10G10B10A2_UNORM;
+			}
 		}
 		desc.width = canvas.GetPhysicalWidth();
 		desc.height = canvas.GetPhysicalHeight();
 		desc.allow_hdr = allow_hdr;
 		bool success = graphicsDevice->CreateSwapChain(&desc, window, &swapChain);
 		assert(success);
+
+#ifdef PLATFORM_PS5
+		// PS5 swapchain resolution was decided in CreateSwapchain(), so reinit canvas:
+		canvas.init(swapChain.desc.width, swapChain.desc.height);
+#endif // PLATFORM_PS5
 
 		swapChainVsyncChangeEvent = wi::eventhandler::Subscribe(wi::eventhandler::EVENT_SET_VSYNC, [this](uint64_t userdata) {
 			SwapChainDesc desc = swapChain.desc;
@@ -583,22 +659,6 @@ namespace wi
 			assert(success);
 			});
 
-		if (graphicsDevice->GetSwapChainColorSpace(&swapChain) == ColorSpace::HDR10_ST2084)
-		{
-			TextureDesc desc;
-			desc.width = swapChain.desc.width;
-			desc.height = swapChain.desc.height;
-			desc.format = Format::R11G11B10_FLOAT;
-			desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE;
-			bool success = graphicsDevice->CreateTexture(&desc, nullptr, &rendertarget);
-			assert(success);
-			graphicsDevice->SetName(&rendertarget, "Application::rendertarget");
-
-			RenderPassDesc renderpassdesc;
-			renderpassdesc.attachments.push_back(RenderPassAttachment::RenderTarget(rendertarget, RenderPassAttachment::LoadOp::CLEAR));
-			success = graphicsDevice->CreateRenderPass(&renderpassdesc, &renderpass);
-			assert(success);
-		}
 	}
 
 }

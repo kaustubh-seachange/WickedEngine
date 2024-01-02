@@ -361,15 +361,26 @@ namespace wi::lua::renderer
 			Vector_BindLua* v = Luna<Vector_BindLua>::lightcheck(L, 2);
 			if (v)
 			{
-				XMFLOAT3 pos;
-				XMStoreFloat3(&pos, XMLoadFloat4(&v->data));
-				GetGlobalScene()->PutWaterRipple(name, pos);
+				GetGlobalScene()->PutWaterRipple(name, v->GetFloat3());
 			}
 			else
-				wi::lua::SError(L, "PutWaterRipple(String imagename, Vector position) argument is not a Vector!");
+				wi::lua::SError(L, "PutWaterRipple(string imagename, Vector position) argument is not a Vector!");
+		}
+		else if (argc > 0)
+		{
+			Vector_BindLua* v = Luna<Vector_BindLua>::lightcheck(L, 1);
+			if (v)
+			{
+				GetGlobalScene()->PutWaterRipple(v->GetFloat3());
+			}
+			else
+				wi::lua::SError(L, "PutWaterRipple(Vector position) argument is not a Vector!");
 		}
 		else
-			wi::lua::SError(L, "PutWaterRipple(String imagename, Vector position) not enough arguments!");
+		{
+			wi::lua::SError(L, "PutWaterRipple(Vector position) not enough arguments!");
+			wi::lua::SError(L, "PutWaterRipple(string imagename, Vector position) not enough arguments!");
+		}
 		return 0;
 	}
 
@@ -403,9 +414,6 @@ namespace wi::lua::renderer
 			wi::lua::RegisterFunc("SetGameSpeed", SetGameSpeed);
 			wi::lua::RegisterFunc("GetGameSpeed", GetGameSpeed);
 
-			wi::lua::RunText("GetScreenWidth = function() return main.GetCanvas().GetLogicalWidth() end");
-			wi::lua::RunText("GetScreenHeight = function() return main.GetCanvas().GetLogicalHeight() end");
-
 			wi::lua::RegisterFunc("SetShadowProps2D", SetShadowProps2D);
 			wi::lua::RegisterFunc("SetShadowPropsCube", SetShadowPropsCube);
 			wi::lua::RegisterFunc("SetDebugBoxesEnabled", SetDebugBoxesEnabled);
@@ -426,13 +434,18 @@ namespace wi::lua::renderer
 			wi::lua::RegisterFunc("DrawDebugText", DrawDebugText);
 			wi::lua::RegisterFunc("PutWaterRipple", PutWaterRipple);
 
-			wi::lua::RunText("DEBUG_TEXT_DEPTH_TEST = 1");
-			wi::lua::RunText("DEBUG_TEXT_CAMERA_FACING = 2");
-			wi::lua::RunText("DEBUG_TEXT_CAMERA_SCALING = 4");
-
-
 			wi::lua::RegisterFunc("ClearWorld", ClearWorld);
 			wi::lua::RegisterFunc("ReloadShaders", ReloadShaders);
+
+			wi::lua::RunText(R"(
+GetScreenWidth = function() return main.GetCanvas().GetLogicalWidth() end
+GetScreenHeight = function() return main.GetCanvas().GetLogicalHeight() end
+
+DEBUG_TEXT_DEPTH_TEST = 1
+DEBUG_TEXT_CAMERA_FACING = 2
+DEBUG_TEXT_CAMERA_SCALING = 4
+)");
+
 		}
 	}
 };

@@ -96,7 +96,7 @@ bool ImGui_Impl_CreateDeviceObjects()
 	samplerDesc.address_u = TextureAddressMode::WRAP;
 	samplerDesc.address_v = TextureAddressMode::WRAP;
 	samplerDesc.address_w = TextureAddressMode::WRAP;
-	samplerDesc.filter = Filter::MAXIMUM_MIN_MAG_MIP_LINEAR;
+	samplerDesc.filter = Filter::MIN_MAG_MIP_LINEAR;
 	wi::graphics::GetDevice()->CreateSampler(&samplerDesc, &sampler);
 
 	// Store our identifier
@@ -1068,7 +1068,7 @@ void Example_ImGuiRenderer::Update(float dt)
 			static bool bVoxelGIEnabled = false;
 			if (ImGui::Checkbox("Voxel GI", &bVoxelGIEnabled))
 			{
-				wi::renderer::SetVoxelRadianceEnabled(bVoxelGIEnabled);
+				wi::renderer::SetVXGIEnabled(bVoxelGIEnabled);
 			}
 
 
@@ -1495,13 +1495,13 @@ void Example_ImGuiRenderer::Update(float dt)
 
 		movespeed *= dt;
 
-		if ((ImGui::IsKeyDown(87) || ImGui::IsKeyDown(38))) //W UP
+		if ((ImGui::IsKeyDown(ImGuiKey_W) || ImGui::IsKeyDown(ImGuiKey_UpArrow))) //W UP
 		{
 			camera_pos[0] += movespeed * camera.At.x;
 			camera_pos[1] += movespeed * camera.At.y;
 			camera_pos[2] += movespeed * camera.At.z;
 		}
-		if ((ImGui::IsKeyDown(83) || ImGui::IsKeyDown(40))) //S Down
+		if ((ImGui::IsKeyDown(ImGuiKey_S) || ImGui::IsKeyDown(ImGuiKey_DownArrow))) //S Down
 		{
 			camera_pos[0] += -movespeed * camera.At.x;
 			camera_pos[1] += -movespeed * camera.At.y;
@@ -1511,13 +1511,13 @@ void Example_ImGuiRenderer::Update(float dt)
 		XMFLOAT3 dir_right;
 		XMStoreFloat3(&dir_right, camera.GetRight());
 
-		if ((ImGui::IsKeyDown(68) || ImGui::IsKeyDown(39))) //D 
+		if ((ImGui::IsKeyDown(ImGuiKey_D) || ImGui::IsKeyDown(ImGuiKey_RightArrow))) //D Right
 		{
 			camera_pos[0] += -movespeed * dir_right.x;
 			camera_pos[1] += -movespeed * dir_right.y;
 			camera_pos[2] += -movespeed * dir_right.z;
 		}
-		if ((ImGui::IsKeyDown(65) || ImGui::IsKeyDown(37))) //A
+		if ((ImGui::IsKeyDown(ImGuiKey_A) || ImGui::IsKeyDown(ImGuiKey_LeftArrow))) //A Left
 		{
 			camera_pos[0] += movespeed * dir_right.x;
 			camera_pos[1] += movespeed * dir_right.y;

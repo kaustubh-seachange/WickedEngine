@@ -5,8 +5,11 @@
 #include "wiArchive.h"
 #include "wiJobSystem.h"
 #include "wiVector.h"
+#include "wiVideo.h"
+#include "wiUnorderedSet.h"
 
 #include <memory>
+#include <string>
 
 namespace wi
 {
@@ -21,12 +24,22 @@ namespace wi
 		const wi::graphics::Texture& GetTexture() const;
 		const wi::audio::Sound& GetSound() const;
 		const std::string& GetScript() const;
+		const wi::video::Video& GetVideo() const;
+		int GetTextureSRGBSubresource() const;
+		int GetFontStyle() const;
 
 		void SetFileData(const wi::vector<uint8_t>& data);
 		void SetFileData(wi::vector<uint8_t>&& data);
-		void SetTexture(const wi::graphics::Texture& texture);
+		// Allows to set a Texture to the resource from outside
+		//	srgb_subresource: you can provide a subresource for SRGB view if the texture is going to be used as SRGB with the GetTextureSRGBSubresource() (optional)
+		void SetTexture(const wi::graphics::Texture& texture, int srgb_subresource = -1);
 		void SetSound(const wi::audio::Sound& sound);
 		void SetScript(const std::string& script);
+		void SetVideo(const wi::video::Video& script);
+
+		// Resource marked for recreate on resourcemanager::Load()
+		//	It keeps embedded file data if exists
+		void SetOutdated();
 	};
 
 	namespace resourcemanager
@@ -41,7 +54,9 @@ namespace wi
 		Mode GetMode();
 		wi::vector<std::string> GetSupportedImageExtensions();
 		wi::vector<std::string> GetSupportedSoundExtensions();
+		wi::vector<std::string> GetSupportedVideoExtensions();
 		wi::vector<std::string> GetSupportedScriptExtensions();
+		wi::vector<std::string> GetSupportedFontStyleExtensions();
 
 		// Order of these must not change as the flags can be serialized!
 		enum class Flags
@@ -49,6 +64,9 @@ namespace wi
 			NONE = 0,
 			IMPORT_COLORGRADINGLUT = 1 << 0, // image import will convert resource to 3D color grading LUT
 			IMPORT_RETAIN_FILEDATA = 1 << 1, // file data will be kept for later reuse. This is necessary for keeping the resource serializable
+			IMPORT_NORMALMAP = 1 << 2, // image import will try to use optimal normal map encoding
+			IMPORT_BLOCK_COMPRESSED = 1 << 3, // image import will request block compression for uncompressed or transcodable formats
+			IMPORT_DELAY = 1 << 4, // delay importing resource until later, for example when proper flags can be determined
 		};
 
 		// Load a resource
@@ -71,9 +89,11 @@ namespace wi
 		{
 			wi::vector<Resource> resources;
 		};
+
 		// Serializes all resources that are compatible
 		//	Compatible resources are those whose file data is kept around using the IMPORT_RETAIN_FILEDATA flag when loading.
-		void Serialize(wi::Archive& archive, ResourceSerializer& seri);
+		void Serialize_READ(wi::Archive& archive, ResourceSerializer& resources);
+		void Serialize_WRITE(wi::Archive& archive, const wi::unordered_set<std::string>& resource_names);
 	}
 
 }

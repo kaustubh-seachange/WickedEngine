@@ -1,3 +1,4 @@
+#define TEXTURE_SLOT_NONUNIFORM
 #include "globals.hlsli"
 #include "raytracingHF.hlsli"
 #include "lightingHF.hlsli"
@@ -41,17 +42,16 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		rayData.direction = ray.Direction;
 
 #ifdef RTAPI
-		RayQuery<
-			RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES |
-			RAY_FLAG_FORCE_OPAQUE
-		> q;
+		wiRayQuery q;
 		q.TraceRayInline(
 			scene_acceleration_structure,	// RaytracingAccelerationStructure AccelerationStructure
-			0,								// uint RayFlags
+			RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES |
+			RAY_FLAG_FORCE_OPAQUE |
+			RAY_FLAG_CULL_BACK_FACING_TRIANGLES,	// uint RayFlags
 			push.instanceInclusionMask,		// uint InstanceInclusionMask
 			ray								// RayDesc Ray
 		);
-		q.Proceed();
+		while (q.Proceed());
 		if (q.CommittedStatus() != COMMITTED_TRIANGLE_HIT)
 #else
 		RayHit hit = TraceRay_Closest(ray, push.instanceInclusionMask, rng);
@@ -65,11 +65,11 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			if (IsStaticSky())
 			{
 				// We have envmap information in a texture:
-				envColor = DEGAMMA_SKY(texture_globalenvmap.SampleLevel(sampler_linear_clamp, ray.Direction, 0).rgb);
+				envColor = GetStaticSkyColor(ray.Direction);
 			}
 			else
 			{
-				envColor = GetDynamicSkyColor(ray.Direction, true, true, false, true);
+				envColor = GetDynamicSkyColor(ray.Direction, true, false, true);
 			}
 			rayData.radiance = max(0, envColor);
 			rayData.depth = -1;
@@ -142,6 +142,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 					dist = FLT_MAX;
 
 					L = light.GetDirection().xyz;
+					L += sample_hemisphere_cos(L, rng) * light.GetRadius();
 					NdotL = saturate(dot(L, surface.N));
 
 					[branch]
@@ -161,6 +162,8 @@ void main(uint3 DTid : SV_DispatchThreadID)
 				break;
 				case ENTITY_TYPE_POINTLIGHT:
 				{
+					light.position += light.GetDirection() * (rng.next_float() - 0.5) * light.GetLength();
+					light.position += sample_hemisphere_cos(normalize(light.position - surface.P), rng) * light.GetRadius();
 					L = light.position - surface.P;
 					const float dist2 = dot(L, L);
 					const float range = light.GetRange();
@@ -186,6 +189,8 @@ void main(uint3 DTid : SV_DispatchThreadID)
 				break;
 				case ENTITY_TYPE_SPOTLIGHT:
 				{
+					float3 Loriginal = normalize(light.position - surface.P);
+					light.position += sample_hemisphere_cos(normalize(light.position - surface.P), rng) * light.GetRadius();
 					L = light.position - surface.P;
 					const float dist2 = dot(L, L);
 					const float range = light.GetRange();
@@ -201,7 +206,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 						[branch]
 						if (NdotL > 0)
 						{
-							const float spot_factor = dot(L, light.GetDirection());
+							const float spot_factor = dot(Loriginal, light.GetDirection());
 							const float spot_cutoff = light.GetConeAngleCos();
 
 							[branch]
@@ -224,21 +229,20 @@ void main(uint3 DTid : SV_DispatchThreadID)
 
 					RayDesc newRay;
 					newRay.Origin = surface.P;
-#if 1
-					newRay.Direction = normalize(lerp(L, sample_hemisphere_cos(L, rng), 0.025f));
-#else
-					newRay.Direction = L;
-#endif
 					newRay.TMin = 0.001;
 					newRay.TMax = dist;
+					newRay.Direction = L + max3(surface.sss);
+
 #ifdef RTAPI
 					q.TraceRayInline(
 						scene_acceleration_structure,	// RaytracingAccelerationStructure AccelerationStructure
+						RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES |
+						RAY_FLAG_FORCE_OPAQUE |
 						RAY_FLAG_CULL_FRONT_FACING_TRIANGLES | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,	// uint RayFlags
 						0xFF,							// uint InstanceInclusionMask
 						newRay							// RayDesc Ray
 					);
-					q.Proceed();
+					while (q.Proceed());
 					shadow = q.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0 : shadow;
 #else
 					shadow = TraceRay_Any(newRay, push.instanceInclusionMask, rng) ? 0 : shadow;

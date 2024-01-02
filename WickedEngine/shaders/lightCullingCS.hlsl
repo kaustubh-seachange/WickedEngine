@@ -6,13 +6,8 @@
 
 StructuredBuffer<Frustum> in_Frustums : register(t0);
 
-RWByteAddressBuffer EntityTiles_Transparent : register(u0);
-RWByteAddressBuffer EntityTiles_Opaque : register(u1);
-
-
-#ifdef DEBUG_TILEDLIGHTCULLING
-RWTexture2D<unorm float4> DebugTexture : register(u3);
-#endif
+RWStructuredBuffer<uint> EntityTiles_Transparent : register(u0);
+RWStructuredBuffer<uint> EntityTiles_Opaque : register(u1);
 
 // Group shared variables.
 groupshared uint uMinDepth;
@@ -22,6 +17,7 @@ groupshared uint tile_opaque[SHADER_ENTITY_TILE_BUCKET_COUNT];
 groupshared uint tile_transparent[SHADER_ENTITY_TILE_BUCKET_COUNT];
 #ifdef DEBUG_TILEDLIGHTCULLING
 groupshared uint entityCountDebug;
+RWTexture2D<unorm float4> DebugTexture : register(u3);
 #endif // DEBUG_TILEDLIGHTCULLING
 
 void AppendEntity_Opaque(uint entityIndex)
@@ -230,17 +226,16 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 	{
 		ShaderEntity entity = load_entity(i);
 
-		if (entity.GetFlags() & ENTITY_FLAG_LIGHT_STATIC)
-		{
-			continue; // static lights will be skipped here (they are used at lightmap baking)
-		}
-
 		switch (entity.GetType())
 		{
 		case ENTITY_TYPE_POINTLIGHT:
 		{
+			if (entity.GetFlags() & ENTITY_FLAG_LIGHT_STATIC)
+				break; // static lights will be skipped here (they are used at lightmap baking)
+			if (!any(entity.GetColor().rgb))
+				break;
 			float3 positionVS = mul(GetCamera().view, float4(entity.position, 1)).xyz;
-			Sphere sphere = { positionVS.xyz, entity.GetRange() };
+			Sphere sphere = { positionVS.xyz, entity.GetRange() + entity.GetLength() };
 			if (SphereInsideFrustum(sphere, GroupFrustum, nearClipVS, maxDepthVS))
 			{
 				AppendEntity_Transparent(i);
@@ -259,6 +254,10 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 		break;
 		case ENTITY_TYPE_SPOTLIGHT:
 		{
+			if (entity.GetFlags() & ENTITY_FLAG_LIGHT_STATIC)
+				break; // static lights will be skipped here (they are used at lightmap baking)
+			if (!any(entity.GetColor().rgb))
+				break;
 			float3 positionVS = mul(GetCamera().view, float4(entity.position, 1)).xyz;
 			float3 directionVS = mul((float3x3)GetCamera().view, entity.GetDirection());
 			// Construct a tight fitting sphere around the spotlight cone:
@@ -283,6 +282,10 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 		break;
 		case ENTITY_TYPE_DIRECTIONALLIGHT:
 		{
+			if (entity.GetFlags() & ENTITY_FLAG_LIGHT_STATIC)
+				break; // static lights will be skipped here (they are used at lightmap baking)
+			if (!any(entity.GetColor().rgb))
+				break;
 			AppendEntity_Transparent(i);
 			AppendEntity_Opaque(i);
 		}
@@ -325,8 +328,8 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 	// Each thread will export one bucket from LDS to global memory:
 	for (i = groupIndex; i < SHADER_ENTITY_TILE_BUCKET_COUNT; i += TILED_CULLING_THREADSIZE * TILED_CULLING_THREADSIZE)
 	{
-		EntityTiles_Opaque.Store((tileBucketsAddress + i) * sizeof(uint), tile_opaque[i]);
-		EntityTiles_Transparent.Store((tileBucketsAddress + i) * sizeof(uint), tile_transparent[i]);
+		EntityTiles_Opaque[tileBucketsAddress + i] = tile_opaque[i];
+		EntityTiles_Transparent[tileBucketsAddress + i] = tile_transparent[i];
 	}
 
 #ifdef DEBUG_TILEDLIGHTCULLING

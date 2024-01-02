@@ -5,8 +5,6 @@
 namespace wi::lua
 {
 
-	const char Audio_BindLua::className[] = "Audio";
-
 	Luna<Audio_BindLua>::FunctionType Audio_BindLua::methods[] = {
 		lunamethod(Audio_BindLua, CreateSound),
 		lunamethod(Audio_BindLua, CreateSoundInstance),
@@ -36,6 +34,7 @@ namespace wi::lua
 			{
 				bool result = wi::audio::CreateSound(wi::lua::SGetString(L, 1), &sound->sound);
 				wi::lua::SSetBool(L, result);
+				return 1;
 			}
 			else
 			{
@@ -240,43 +239,45 @@ namespace wi::lua
 			initialized = true;
 			Luna<Audio_BindLua>::Register(wi::lua::GetLuaState());
 
-			wi::lua::RunText("audio = Audio()");
+			wi::lua::RunText(R"(
+audio = Audio()
 
-			wi::lua::RunText("SUBMIX_TYPE_SOUNDEFFECT = 0");
-			wi::lua::RunText("SUBMIX_TYPE_MUSIC = 1");
-			wi::lua::RunText("SUBMIX_TYPE_USER0 = 2");
-			wi::lua::RunText("SUBMIX_TYPE_USER1 = 3");
+SUBMIX_TYPE_SOUNDEFFECT = 0
+SUBMIX_TYPE_MUSIC = 1
+SUBMIX_TYPE_USER0 = 2
+SUBMIX_TYPE_USER1 = 3
 
-			wi::lua::RunText("REVERB_PRESET_DEFAULT = 0");
-			wi::lua::RunText("REVERB_PRESET_GENERIC = 1");
-			wi::lua::RunText("REVERB_PRESET_FOREST = 2");
-			wi::lua::RunText("REVERB_PRESET_PADDEDCELL = 3");
-			wi::lua::RunText("REVERB_PRESET_ROOM = 4");
-			wi::lua::RunText("REVERB_PRESET_BATHROOM = 5");
-			wi::lua::RunText("REVERB_PRESET_LIVINGROOM = 6");
-			wi::lua::RunText("REVERB_PRESET_STONEROOM = 7");
-			wi::lua::RunText("REVERB_PRESET_AUDITORIUM = 8");
-			wi::lua::RunText("REVERB_PRESET_CONCERTHALL = 9");
-			wi::lua::RunText("REVERB_PRESET_CAVE = 10");
-			wi::lua::RunText("REVERB_PRESET_ARENA = 11");
-			wi::lua::RunText("REVERB_PRESET_HANGAR = 12");
-			wi::lua::RunText("REVERB_PRESET_CARPETEDHALLWAY = 13");
-			wi::lua::RunText("REVERB_PRESET_HALLWAY = 14");
-			wi::lua::RunText("REVERB_PRESET_STONECORRIDOR = 15");
-			wi::lua::RunText("REVERB_PRESET_ALLEY = 16");
-			wi::lua::RunText("REVERB_PRESET_CITY = 17");
-			wi::lua::RunText("REVERB_PRESET_MOUNTAINS = 18");
-			wi::lua::RunText("REVERB_PRESET_QUARRY = 19");
-			wi::lua::RunText("REVERB_PRESET_PLAIN = 20");
-			wi::lua::RunText("REVERB_PRESET_PARKINGLOT = 21");
-			wi::lua::RunText("REVERB_PRESET_SEWERPIPE = 22");
-			wi::lua::RunText("REVERB_PRESET_UNDERWATER = 23");
-			wi::lua::RunText("REVERB_PRESET_SMALLROOM = 24");
-			wi::lua::RunText("REVERB_PRESET_MEDIUMROOM = 25");
-			wi::lua::RunText("REVERB_PRESET_LARGEROOM = 26");
-			wi::lua::RunText("REVERB_PRESET_MEDIUMHALL = 27");
-			wi::lua::RunText("REVERB_PRESET_LARGEHALL = 28");
-			wi::lua::RunText("REVERB_PRESET_PLATE = 29");
+REVERB_PRESET_DEFAULT = 0
+REVERB_PRESET_GENERIC = 1
+REVERB_PRESET_FOREST = 2
+REVERB_PRESET_PADDEDCELL = 3
+REVERB_PRESET_ROOM = 4
+REVERB_PRESET_BATHROOM = 5
+REVERB_PRESET_LIVINGROOM = 6
+REVERB_PRESET_STONEROOM = 7
+REVERB_PRESET_AUDITORIUM = 8
+REVERB_PRESET_CONCERTHALL = 9
+REVERB_PRESET_CAVE = 10
+REVERB_PRESET_ARENA = 11
+REVERB_PRESET_HANGAR = 12
+REVERB_PRESET_CARPETEDHALLWAY = 13
+REVERB_PRESET_HALLWAY = 14
+REVERB_PRESET_STONECORRIDOR = 15
+REVERB_PRESET_ALLEY = 16
+REVERB_PRESET_CITY = 17
+REVERB_PRESET_MOUNTAINS = 18
+REVERB_PRESET_QUARRY = 19
+REVERB_PRESET_PLAIN = 20
+REVERB_PRESET_PARKINGLOT = 21
+REVERB_PRESET_SEWERPIPE = 22
+REVERB_PRESET_UNDERWATER = 23
+REVERB_PRESET_SMALLROOM = 24
+REVERB_PRESET_MEDIUMROOM = 25
+REVERB_PRESET_LARGEROOM = 26
+REVERB_PRESET_MEDIUMHALL = 27
+REVERB_PRESET_LARGEHALL = 28
+REVERB_PRESET_PLATE = 29
+)");
 
 			Sound_BindLua::Bind();
 			SoundInstance_BindLua::Bind();
@@ -287,14 +288,19 @@ namespace wi::lua
 
 
 
-	const char Sound_BindLua::className[] = "Sound";
-
 	Luna<Sound_BindLua>::FunctionType Sound_BindLua::methods[] = {
+		lunamethod(Sound_BindLua, IsValid),
 		{ NULL, NULL }
 	};
 	Luna<Sound_BindLua>::PropertyType Sound_BindLua::properties[] = {
 		{ NULL, NULL }
 	};
+
+	int Sound_BindLua::IsValid(lua_State* L)
+	{
+		wi::lua::SSetBool(L, sound.IsValid());
+		return 1;
+	}
 
 	void Sound_BindLua::Bind()
 	{
@@ -308,11 +314,22 @@ namespace wi::lua
 
 
 
-
-	const char SoundInstance_BindLua::className[] = "SoundInstance";
-
 	Luna<SoundInstance_BindLua>::FunctionType SoundInstance_BindLua::methods[] = {
 		lunamethod(SoundInstance_BindLua, SetSubmixType),
+		lunamethod(SoundInstance_BindLua, SetBegin),
+		lunamethod(SoundInstance_BindLua, SetLength),
+		lunamethod(SoundInstance_BindLua, SetLoopBegin),
+		lunamethod(SoundInstance_BindLua, SetLoopLength),
+		lunamethod(SoundInstance_BindLua, SetEnableReverb),
+		lunamethod(SoundInstance_BindLua, SetLooped),
+		lunamethod(SoundInstance_BindLua, GetSubmixType),
+		lunamethod(SoundInstance_BindLua, GetBegin),
+		lunamethod(SoundInstance_BindLua, GetLength),
+		lunamethod(SoundInstance_BindLua, GetLoopBegin),
+		lunamethod(SoundInstance_BindLua, GetLoopLength),
+		lunamethod(SoundInstance_BindLua, IsEnableReverb),
+		lunamethod(SoundInstance_BindLua, IsLooped),
+		lunamethod(SoundInstance_BindLua, IsValid),
 		{ NULL, NULL }
 	};
 	Luna<SoundInstance_BindLua>::PropertyType SoundInstance_BindLua::properties[] = {
@@ -331,6 +348,112 @@ namespace wi::lua
 			wi::lua::SError(L, "SetSubmixType(int submixtype) not enough arguments!");
 		return 0;
 	}
+	int SoundInstance_BindLua::SetBegin(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 0)
+		{
+			soundinstance.begin = wi::lua::SGetFloat(L, 1);
+		}
+		else
+			wi::lua::SError(L, "SetBegin(float seconds) not enough arguments!");
+		return 0;
+	}
+	int SoundInstance_BindLua::SetLength(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 0)
+		{
+			soundinstance.length = wi::lua::SGetFloat(L, 1);
+		}
+		else
+			wi::lua::SError(L, "SetLength(float seconds) not enough arguments!");
+		return 0;
+	}
+	int SoundInstance_BindLua::SetLoopBegin(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 0)
+		{
+			soundinstance.loop_begin = wi::lua::SGetFloat(L, 1);
+		}
+		else
+			wi::lua::SError(L, "SetLoopBegin(float seconds) not enough arguments!");
+		return 0;
+	}
+	int SoundInstance_BindLua::SetLoopLength(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 0)
+		{
+			soundinstance.loop_length = wi::lua::SGetFloat(L, 1);
+		}
+		else
+			wi::lua::SError(L, "SetLoopLength(float seconds) not enough arguments!");
+		return 0;
+	}
+	int SoundInstance_BindLua::SetEnableReverb(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 0)
+		{
+			soundinstance.SetEnableReverb(wi::lua::SGetBool(L, 1));
+		}
+		else
+			wi::lua::SError(L, "SetEnableReverb(bool value) not enough arguments!");
+		return 0;
+	}
+	int SoundInstance_BindLua::SetLooped(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 0)
+		{
+			soundinstance.SetLooped(wi::lua::SGetBool(L, 1));
+		}
+		else
+			wi::lua::SError(L, "SetLooped(bool value) not enough arguments!");
+		return 0;
+	}
+	int SoundInstance_BindLua::GetSubmixType(lua_State* L)
+	{
+		wi::lua::SSetInt(L, (int)soundinstance.type);
+		return 1;
+	}
+	int SoundInstance_BindLua::GetBegin(lua_State* L)
+	{
+		wi::lua::SSetFloat(L, soundinstance.begin);
+		return 1;
+	}
+	int SoundInstance_BindLua::GetLength(lua_State* L)
+	{
+		wi::lua::SSetFloat(L, soundinstance.length);
+		return 1;
+	}
+	int SoundInstance_BindLua::GetLoopBegin(lua_State* L)
+	{
+		wi::lua::SSetFloat(L, soundinstance.loop_begin);
+		return 1;
+	}
+	int SoundInstance_BindLua::GetLoopLength(lua_State* L)
+	{
+		wi::lua::SSetFloat(L, soundinstance.loop_length);
+		return 1;
+	}
+	int SoundInstance_BindLua::IsEnableReverb(lua_State* L)
+	{
+		wi::lua::SSetBool(L, soundinstance.IsEnableReverb());
+		return 1;
+	}
+	int SoundInstance_BindLua::IsLooped(lua_State* L)
+	{
+		wi::lua::SSetBool(L, soundinstance.IsLooped());
+		return 1;
+	}
+	int SoundInstance_BindLua::IsValid(lua_State* L)
+	{
+		wi::lua::SSetBool(L, soundinstance.IsValid());
+		return 1;
+	}
 
 	void SoundInstance_BindLua::Bind()
 	{
@@ -344,8 +467,6 @@ namespace wi::lua
 
 
 
-
-	const char SoundInstance3D_BindLua::className[] = "SoundInstance3D";
 
 	Luna<SoundInstance3D_BindLua>::FunctionType SoundInstance3D_BindLua::methods[] = {
 		lunamethod(SoundInstance3D_BindLua, SetListenerPos),

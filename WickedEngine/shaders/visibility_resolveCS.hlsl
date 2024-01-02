@@ -53,8 +53,12 @@ void main(uint2 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 	const float2 uv = ((float2)pixel + 0.5) * GetCamera().internal_resolution_rcp;
 	const float2 clipspace = uv_to_clipspace(uv);
 	RayDesc ray = CreateCameraRay(clipspace);
-
+	
+#ifdef VISIBILITY_MSAA
+	uint primitiveID = input_primitiveID.Load(pixel, 0);
+#else
 	uint primitiveID = input_primitiveID[pixel];
+#endif // VISIBILITY_MSAA
 
 #ifdef VISIBILITY_MSAA
 	output_primitiveID[pixel] = primitiveID;
@@ -77,8 +81,8 @@ void main(uint2 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 			if (surface.load(prim, ray.Origin, ray.Direction))
 			{
 				float4 tmp = mul(GetCamera().view_projection, float4(surface.P, 1));
-				tmp.xyz /= tmp.w;
-				depth = tmp.z;
+				tmp.xyz /= max(0.0001, tmp.w); // max: avoid nan
+				depth = saturate(tmp.z); // saturate: avoid blown up values
 
 				bin = surface.material.shaderType;
 			}
@@ -112,7 +116,7 @@ void main(uint2 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 		{
 			uint bin_tile_list_offset = groupIndex * GetCamera().visibility_tilecount_flat;
 			uint tile_offset = 0;
-			InterlockedAdd(output_bins[groupIndex].count, 1, tile_offset);
+			InterlockedAdd(output_bins[groupIndex].dispatchX, 1, tile_offset);
 
 			VisibilityTile tile;
 			tile.visibility_tile_id = pack_pixel(Gid.xy);

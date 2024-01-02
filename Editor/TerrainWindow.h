@@ -1,6 +1,4 @@
 #pragma once
-#include "WickedEngine.h"
-
 class EditorComponent;
 
 struct ModifierWindow : public wi::gui::Window
@@ -56,6 +54,7 @@ public:
 	wi::gui::CheckBox removalCheckBox;
 	wi::gui::CheckBox grassCheckBox;
 	wi::gui::CheckBox physicsCheckBox;
+	wi::gui::CheckBox tessellationCheckBox;
 	wi::gui::Slider lodSlider;
 	wi::gui::Slider generationSlider;
 	wi::gui::Slider propGenerationSlider;
@@ -70,6 +69,7 @@ public:
 	wi::gui::Slider bottomLevelSlider;
 	wi::gui::Slider topLevelSlider;
 	wi::gui::Button saveHeightmapButton;
+	wi::gui::Button saveRegionButton;
 	wi::gui::ComboBox addModifierCombo;
 
 	wi::gui::Slider region1Slider;

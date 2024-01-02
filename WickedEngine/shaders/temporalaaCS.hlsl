@@ -22,6 +22,12 @@ groupshared float tile_depth[TILE_SIZE*TILE_SIZE];
 [numthreads(POSTPROCESS_BLOCKSIZE, POSTPROCESS_BLOCKSIZE, 1)]
 void main(uint3 DTid : SV_DispatchThreadID, uint3 GTid : SV_GroupThreadID, uint3 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 {
+	if (postprocess.params0.x)
+	{
+		// Early exit when it is the first frame
+		output[DTid.xy] = input_current[DTid.xy].rgb;
+		return;
+	}
 	const float2 uv = (DTid.xy + 0.5f) * postprocess.resolution_rcp;
 	float3 neighborhoodMin = 100000;
 	float3 neighborhoodMax = -100000;
@@ -97,16 +103,16 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 GTid : SV_GroupThreadID, uint3
 
 #endif // USE_LDS
 
-	const float2 prevUV = uv + velocity;
+	const float2 prevUV = GetCamera().clamp_uv_to_scissor(uv + velocity);
 
-#if 0
+#if 1
 	// Disocclusion fallback:
 	float depth_current = texture_lineardepth[DTid.xy] * GetCamera().z_far;
 	float depth_history = compute_lineardepth(texture_depth_history.SampleLevel(sampler_point_clamp, prevUV, 0));
 	if (length(velocity) > 0.01 && abs(depth_current - depth_history) > 1)
 	{
 		output[DTid.xy] = current;
-		output[DTid.xy] = float3(1, 0, 0);
+		//output[DTid.xy] = float3(1, 0, 0);
 		return;
 	}
 #endif

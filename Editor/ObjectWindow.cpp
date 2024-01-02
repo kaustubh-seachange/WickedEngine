@@ -1,15 +1,11 @@
 #include "stdafx.h"
-#include "Editor.h"
 #include "ObjectWindow.h"
 #include "wiScene.h"
 
 #include "xatlas.h"
 
-#include <string>
-
 using namespace wi::ecs;
 using namespace wi::scene;
-
 
 static void SetPixel(uint8_t *dest, int destWidth, int x, int y, const uint8_t *color)
 {
@@ -261,7 +257,7 @@ void ObjectWindow::Create(EditorComponent* _editor)
 	editor = _editor;
 
 	wi::gui::Window::Create(ICON_OBJECT " Object", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE);
-	SetSize(XMFLOAT2(670, 600));
+	SetSize(XMFLOAT2(670, 740));
 
 	closeButton.SetTooltip("Delete ObjectComponent");
 	OnClose([=](wi::gui::EventArgs args) {
@@ -338,7 +334,7 @@ void ObjectWindow::Create(EditorComponent* _editor)
 	AddWidget(&shadowCheckBox);
 
 	navmeshCheckBox.Create("Navmesh: ");
-	navmeshCheckBox.SetTooltip("Set object to be a navigation mesh filtering (FILTER_NAVIGATION_MESH).");
+	navmeshCheckBox.SetTooltip("Set object to be a navigation mesh filtering (FILTER_NAVIGATION_MESH).\nTurning on navmesh also enables BVH for the underlying mesh.");
 	navmeshCheckBox.SetSize(XMFLOAT2(hei, hei));
 	navmeshCheckBox.SetPos(XMFLOAT2(x, y += step));
 	navmeshCheckBox.SetCheck(true);
@@ -352,6 +348,12 @@ void ObjectWindow::Create(EditorComponent* _editor)
 				if (args.bValue)
 				{
 					object->filterMask |= wi::enums::FILTER_NAVIGATION_MESH;
+
+					MeshComponent* mesh = scene.meshes.GetComponent(object->meshID);
+					if (mesh != nullptr)
+					{
+						mesh->SetBVHEnabled(args.bValue);
+					}
 				}
 				else
 				{
@@ -361,6 +363,60 @@ void ObjectWindow::Create(EditorComponent* _editor)
 		}
 		});
 	AddWidget(&navmeshCheckBox);
+
+	foregroundCheckBox.Create("Foreground: ");
+	foregroundCheckBox.SetTooltip("Set object to be rendered in the foreground.\nThis is useful for first person hands or weapons, so that they not clip into walls and other objects.");
+	foregroundCheckBox.SetSize(XMFLOAT2(hei, hei));
+	foregroundCheckBox.SetPos(XMFLOAT2(x, y += step));
+	foregroundCheckBox.SetCheck(true);
+	foregroundCheckBox.OnClick([&](wi::gui::EventArgs args) {
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
+		{
+			ObjectComponent* object = scene.objects.GetComponent(x.entity);
+			if (object != nullptr)
+			{
+				object->SetForeground(args.bValue);
+			}
+		}
+		});
+	AddWidget(&foregroundCheckBox);
+
+	notVisibleInMainCameraCheckBox.Create("Not visible in main camera: ");
+	notVisibleInMainCameraCheckBox.SetTooltip("Set object to be not rendered in the main camera.\nThis is useful for first person character model, as the character will still be rendered in reflections and shadows.");
+	notVisibleInMainCameraCheckBox.SetSize(XMFLOAT2(hei, hei));
+	notVisibleInMainCameraCheckBox.SetPos(XMFLOAT2(x, y += step));
+	notVisibleInMainCameraCheckBox.SetCheck(true);
+	notVisibleInMainCameraCheckBox.OnClick([&](wi::gui::EventArgs args) {
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
+		{
+			ObjectComponent* object = scene.objects.GetComponent(x.entity);
+			if (object != nullptr)
+			{
+				object->SetNotVisibleInMainCamera(args.bValue);
+			}
+		}
+		});
+	AddWidget(&notVisibleInMainCameraCheckBox);
+
+	notVisibleInReflectionsCheckBox.Create("Not visible in reflections: ");
+	notVisibleInReflectionsCheckBox.SetTooltip("Set object to be not rendered in the reflections.\nThis is useful for vampires.");
+	notVisibleInReflectionsCheckBox.SetSize(XMFLOAT2(hei, hei));
+	notVisibleInReflectionsCheckBox.SetPos(XMFLOAT2(x, y += step));
+	notVisibleInReflectionsCheckBox.SetCheck(true);
+	notVisibleInReflectionsCheckBox.OnClick([&](wi::gui::EventArgs args) {
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
+		{
+			ObjectComponent* object = scene.objects.GetComponent(x.entity);
+			if (object != nullptr)
+			{
+				object->SetNotVisibleInReflections(args.bValue);
+			}
+		}
+		});
+	AddWidget(&notVisibleInReflectionsCheckBox);
 
 	ditherSlider.Create(0, 1, 0, 1000, "Transparency: ");
 	ditherSlider.SetTooltip("Adjust transparency of the object. Opaque materials will use dithered transparency in this case!");
@@ -414,6 +470,19 @@ void ObjectWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&drawdistanceSlider);
 
+	sortPrioritySlider.Create(0, 15, 0, 15, "Sort Priority: ");
+	sortPrioritySlider.SetTooltip("Set to larger value to draw earlier (most useful for transparents with alpha blending, if the sorting order by distance is not good enough)");
+	sortPrioritySlider.SetSize(XMFLOAT2(wid, hei));
+	sortPrioritySlider.SetPos(XMFLOAT2(x, y += step));
+	sortPrioritySlider.OnSlide([&](wi::gui::EventArgs args) {
+		ObjectComponent* object = editor->GetCurrentScene().objects.GetComponent(entity);
+		if (object != nullptr)
+		{
+			object->sort_priority = (uint8_t)args.iValue;
+		}
+		});
+	AddWidget(&sortPrioritySlider);
+
 	y += step;
 
 
@@ -427,6 +496,24 @@ void ObjectWindow::Create(EditorComponent* _editor)
 		lightmapResolutionSlider.SetValue(float(wi::math::GetNextPowerOfTwo(uint32_t(args.fValue)))); 
 	});
 	AddWidget(&lightmapResolutionSlider);
+
+	lightmapBlockCompressionCheckBox.Create("Block Compression (BC6H): ");
+	lightmapBlockCompressionCheckBox.SetTooltip("Enabling block compression for lightmaps will reduce memory usage, but it can lead to reduced quality.\nIf enabled, lightmaps will use BC6H block compression.\nIf disabled, lightmaps will use R11G11B10_FLOAT packing.\nChanging this will take effect after a new lightmap was generated.");
+	lightmapBlockCompressionCheckBox.SetSize(XMFLOAT2(hei, hei));
+	lightmapBlockCompressionCheckBox.SetPos(XMFLOAT2(x, y += step));
+	lightmapBlockCompressionCheckBox.SetCheck(true);
+	lightmapBlockCompressionCheckBox.OnClick([&](wi::gui::EventArgs args) {
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
+		{
+			ObjectComponent* object = scene.objects.GetComponent(x.entity);
+			if (object != nullptr)
+			{
+				object->SetLightmapDisableBlockCompression(!args.bValue);
+			}
+		}
+	});
+	AddWidget(&lightmapBlockCompressionCheckBox);
 
 	lightmapSourceUVSetComboBox.Create("UV Set: ");
 	lightmapSourceUVSetComboBox.SetPos(XMFLOAT2(x, y += step));
@@ -639,11 +726,15 @@ void ObjectWindow::SetEntity(Entity entity)
 
 		renderableCheckBox.SetCheck(object->IsRenderable());
 		shadowCheckBox.SetCheck(object->IsCastingShadow());
+		foregroundCheckBox.SetCheck(object->IsForeground());
+		notVisibleInMainCameraCheckBox.SetCheck(object->IsNotVisibleInMainCamera());
+		notVisibleInReflectionsCheckBox.SetCheck(object->IsNotVisibleInReflections());
 		navmeshCheckBox.SetCheck(object->filterMask & wi::enums::FILTER_NAVIGATION_MESH);
 		cascadeMaskSlider.SetValue((float)object->cascadeMask);
 		ditherSlider.SetValue(object->GetTransparency());
 		lodSlider.SetValue(object->lod_distance_multiplier);
 		drawdistanceSlider.SetValue(object->draw_distance);
+		sortPrioritySlider.SetValue((int)object->sort_priority);
 
 		switch (colorComboBox.GetSelected())
 		{
@@ -655,6 +746,8 @@ void ObjectWindow::SetEntity(Entity entity)
 			colorPicker.SetPickColor(wi::Color::fromFloat4(object->emissiveColor));
 			break;
 		}
+
+		lightmapBlockCompressionCheckBox.SetCheck(!object->IsLightmapDisableBlockCompression());
 
 	}
 	else
@@ -711,17 +804,24 @@ void ObjectWindow::ResizeLayout()
 
 	add_right(renderableCheckBox);
 	add_right(shadowCheckBox);
+	add_right(foregroundCheckBox);
+	add_right(notVisibleInMainCameraCheckBox);
+	add_right(notVisibleInReflectionsCheckBox);
 	add_right(navmeshCheckBox);
 	add(ditherSlider);
 	add(cascadeMaskSlider);
 	add(lodSlider);
 	add(drawdistanceSlider);
+	add(sortPrioritySlider);
 	add(colorComboBox);
 	add_fullwidth(colorPicker);
+
+	y += jump;
 	add(lightmapResolutionSlider);
 
 	margin_left = 80;
 
+	add_right(lightmapBlockCompressionCheckBox);
 	add(lightmapSourceUVSetComboBox);
 	add(generateLightmapButton);
 	add(stopLightmapGenButton);

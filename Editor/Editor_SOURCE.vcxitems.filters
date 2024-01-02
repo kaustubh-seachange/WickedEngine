@@ -85,6 +85,12 @@
     <ClCompile Include="$(MSBuildThisFileDirectory)ExpressionWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)ArmatureWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)HumanoidWindow.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)GeneralWindow.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)ProfilerWindow.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)EmbeddedResources.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)VideoWindow.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)SpriteWindow.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)FontWindow.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="$(MSBuildThisFileDirectory)AnimationWindow.h" />
@@ -134,11 +140,23 @@
     <ClInclude Include="$(MSBuildThisFileDirectory)ExpressionWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ArmatureWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)HumanoidWindow.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)GeneralWindow.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)ProfilerWindow.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)yumin.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)VideoWindow.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)SpriteWindow.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)FontWindow.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)startup.lua" />
     <None Include="$(MSBuildThisFileDirectory)config.ini" />
     <None Include="$(MSBuildThisFileDirectory)terrain\props.wiscene">
+      <Filter>terrain</Filter>
+    </None>
+    <None Include="$(MSBuildThisFileDirectory)terrain\props.ini">
+      <Filter>terrain</Filter>
+    </None>
+    <None Include="$(MSBuildThisFileDirectory)terrain\grass.ini">
       <Filter>terrain</Filter>
     </None>
   </ItemGroup>
@@ -149,15 +167,18 @@
     <Filter Include="terrain">
       <UniqueIdentifier>{9a5b997d-f07e-45c5-849a-717f15cba0ab}</UniqueIdentifier>
     </Filter>
+    <Filter Include="languages">
+      <UniqueIdentifier>{beae58b9-9c06-4b1f-9e03-a27712d6a579}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="fonts">
+      <UniqueIdentifier>{73a992f5-b6f9-436f-bdd3-eacf76ab0809}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <Image Include="$(MSBuildThisFileDirectory)terrain\base.jpg">
       <Filter>terrain</Filter>
     </Image>
     <Image Include="$(MSBuildThisFileDirectory)terrain\base_nor.jpg">
-      <Filter>terrain</Filter>
-    </Image>
-    <Image Include="$(MSBuildThisFileDirectory)terrain\grassparticle.png">
       <Filter>terrain</Filter>
     </Image>
     <Image Include="$(MSBuildThisFileDirectory)terrain\high_altitude.jpg">
@@ -178,10 +199,32 @@
     <Image Include="$(MSBuildThisFileDirectory)terrain\low_altitude_nor.jpg">
       <Filter>terrain</Filter>
     </Image>
+    <Image Include="$(MSBuildThisFileDirectory)terrain\grassparticle.dds">
+      <Filter>terrain</Filter>
+    </Image>
   </ItemGroup>
   <ItemGroup>
     <Text Include="$(MSBuildThisFileDirectory)terrain\licenses.txt">
       <Filter>terrain</Filter>
     </Text>
+    <Text Include="$(MSBuildThisFileDirectory)languages\readme.txt">
+      <Filter>languages</Filter>
+    </Text>
+    <Text Include="$(MSBuildThisFileDirectory)fonts\readme.txt">
+      <Filter>fonts</Filter>
+    </Text>
+  </ItemGroup>
+  <ItemGroup>
+    <Xml Include="$(MSBuildThisFileDirectory)languages\Magyar.xml">
+      <Filter>languages</Filter>
+    </Xml>
+    <Xml Include="$(MSBuildThisFileDirectory)languages\日本語.xml">
+      <Filter>languages</Filter>
+    </Xml>
+  </ItemGroup>
+  <ItemGroup>
+    <Font Include="$(MSBuildThisFileDirectory)fonts\NotoSansCJKsc-Regular.ttf">
+      <Filter>fonts</Filter>
+    </Font>
   </ItemGroup>
 </Project>

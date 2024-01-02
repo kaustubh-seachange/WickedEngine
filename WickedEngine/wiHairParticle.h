@@ -7,6 +7,7 @@
 #include "wiPrimitive.h"
 #include "wiVector.h"
 #include "wiScene_Decl.h"
+#include "wiScene_Components.h"
 
 namespace wi
 {
@@ -19,19 +20,23 @@ namespace wi
 	{
 	public:
 		wi::graphics::GPUBuffer constantBuffer;
-		wi::graphics::GPUBuffer simulationBuffer;
-		wi::graphics::GPUBuffer vertexBuffer_POS[2];
-		wi::graphics::GPUBuffer vertexBuffer_UVS;
+		wi::graphics::GPUBuffer generalBuffer;
+		wi::scene::MeshComponent::BufferView simulation_view;
+		wi::scene::MeshComponent::BufferView vb_pos[2];
+		wi::scene::MeshComponent::BufferView vb_nor;
+		wi::scene::MeshComponent::BufferView vb_pos_raytracing;
+		wi::scene::MeshComponent::BufferView vb_uvs;
+		wi::scene::MeshComponent::BufferView ib_culled;
+		wi::scene::MeshComponent::BufferView indirect_view;
 		wi::graphics::GPUBuffer primitiveBuffer;
-		wi::graphics::GPUBuffer culledIndexBuffer;
-		wi::graphics::GPUBuffer indirectBuffer;
 
 		wi::graphics::GPUBuffer indexBuffer;
 		wi::graphics::GPUBuffer vertexBuffer_length;
 
 		wi::graphics::RaytracingAccelerationStructure BLAS;
 
-		void CreateRenderData(const wi::scene::MeshComponent& mesh);
+		void CreateFromMesh(const wi::scene::MeshComponent& mesh);
+		void CreateRenderData();
 		void CreateRaytracingRenderData();
 
 		void UpdateCPU(
@@ -39,12 +44,24 @@ namespace wi
 			const wi::scene::MeshComponent& mesh,
 			float dt
 		);
-		void UpdateGPU(
-			uint32_t instanceIndex,
-			const wi::scene::MeshComponent& mesh,
-			const wi::scene::MaterialComponent& material,
+
+		struct UpdateGPUItem
+		{
+			const HairParticleSystem* hair = nullptr;
+			uint32_t instanceIndex = 0;
+			const wi::scene::MeshComponent* mesh = nullptr;
+			const wi::scene::MaterialComponent* material = nullptr;
+		};
+		// Update a batch of hair particles by GPU
+		static void UpdateGPU(
+			const UpdateGPUItem* items,
+			uint32_t itemCount,
 			wi::graphics::CommandList cmd
-		) const;
+		);
+
+		mutable bool gpu_initialized = false;
+		void InitializeGPUDataIfNeeded(wi::graphics::CommandList cmd);
+
 		void Draw(
 			const wi::scene::MaterialComponent& material,
 			wi::enums::RENDERPASS renderPass,
@@ -78,11 +95,11 @@ namespace wi
 
 		// Non-serialized attributes:
 		XMFLOAT4X4 world;
-		XMFLOAT4X4 worldPrev;
 		wi::primitive::AABB aabb;
 		wi::vector<uint32_t> indices; // it is dependent on vertex_lengths and contains triangles with non-zero lengths
 		uint32_t layerMask = ~0u;
 		mutable bool regenerate_frame = true;
+		wi::graphics::Format position_format = wi::graphics::Format::R16G16B16A16_UNORM;
 
 		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
 

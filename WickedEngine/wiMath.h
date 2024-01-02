@@ -30,6 +30,11 @@ using namespace DirectX::PackedVector;
 namespace wi::math
 {
 	static constexpr XMFLOAT4X4 IDENTITY_MATRIX = XMFLOAT4X4(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
+	static constexpr float PI = XM_PI;
+
+	inline bool float_equal(float f1, float f2) {
+		return (std::abs(f1 - f2) <= std::numeric_limits<float>::epsilon() * std::max(std::abs(f1), std::abs(f2)));
+	}
 
 	constexpr float saturate(float x) { return std::min(std::max(x, 0.0f), 1.0f); }
 
@@ -110,9 +115,29 @@ namespace wi::math
 	{
 		return XMFLOAT3((a.x + b.x)*0.5f, (a.y + b.y)*0.5f, (a.z + b.z)*0.5f);
 	}
-	constexpr float InverseLerp(float value1, float value2, float pos)
+	inline XMVECTOR InverseLerp(XMVECTOR value1, XMVECTOR value2, XMVECTOR pos)
 	{
 		return (pos - value1) / (value2 - value1);
+	}
+	constexpr float InverseLerp(float value1, float value2, float pos)
+	{
+		return value2 == value1 ? 0 : ((pos - value1) / (value2 - value1));
+	}
+	constexpr XMFLOAT2 InverseLerp(const XMFLOAT2& value1, const XMFLOAT2& value2, const XMFLOAT2& pos)
+	{
+		return XMFLOAT2(InverseLerp(value1.x, value2.x, pos.x), InverseLerp(value1.y, value2.y, pos.y));
+	}
+	constexpr XMFLOAT3 InverseLerp(const XMFLOAT3& value1, const XMFLOAT3& value2, const XMFLOAT3& pos)
+	{
+		return XMFLOAT3(InverseLerp(value1.x, value2.x, pos.x), InverseLerp(value1.y, value2.y, pos.y), InverseLerp(value1.z, value2.z, pos.z));
+	}
+	constexpr XMFLOAT4 InverseLerp(const XMFLOAT4& value1, const XMFLOAT4& value2, const XMFLOAT4& pos)
+	{
+		return XMFLOAT4(InverseLerp(value1.x, value2.x, pos.x), InverseLerp(value1.y, value2.y, pos.y), InverseLerp(value1.z, value2.z, pos.z), InverseLerp(value1.w, value2.w, pos.w));
+	}
+	inline XMVECTOR Lerp(XMVECTOR value1, XMVECTOR value2, XMVECTOR amount)
+	{
+		return value1 + (value2 - value1) * amount;
 	}
 	constexpr float Lerp(float value1, float value2, float amount)
 	{
@@ -130,6 +155,18 @@ namespace wi::math
 	{
 		return XMFLOAT4(Lerp(a.x, b.x, i), Lerp(a.y, b.y, i), Lerp(a.z, b.z, i), Lerp(a.w, b.w, i));
 	}
+	constexpr XMFLOAT2 Lerp(const XMFLOAT2& a, const XMFLOAT2& b, const XMFLOAT2& i)
+	{
+		return XMFLOAT2(Lerp(a.x, b.x, i.x), Lerp(a.y, b.y, i.y));
+	}
+	constexpr XMFLOAT3 Lerp(const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT3& i)
+	{
+		return XMFLOAT3(Lerp(a.x, b.x, i.x), Lerp(a.y, b.y, i.y), Lerp(a.z, b.z, i.z));
+	}
+	constexpr XMFLOAT4 Lerp(const XMFLOAT4& a, const XMFLOAT4& b, const XMFLOAT4& i)
+	{
+		return XMFLOAT4(Lerp(a.x, b.x, i.x), Lerp(a.y, b.y, i.y), Lerp(a.z, b.z, i.z), Lerp(a.w, b.w, i.w));
+	}
 	inline XMFLOAT4 Slerp(const XMFLOAT4& a, const XMFLOAT4& b, float i)
 	{
 		XMVECTOR _a = XMLoadFloat4(&a);
@@ -139,11 +176,32 @@ namespace wi::math
 		XMStoreFloat4(&retVal, result);
 		return retVal;
 	}
+	constexpr XMFLOAT2 Max(const XMFLOAT2& a, const XMFLOAT2& b) {
+		return XMFLOAT2(std::max(a.x, b.x), std::max(a.y, b.y));
+	}
 	constexpr XMFLOAT3 Max(const XMFLOAT3& a, const XMFLOAT3& b) {
 		return XMFLOAT3(std::max(a.x, b.x), std::max(a.y, b.y), std::max(a.z, b.z));
 	}
+	constexpr XMFLOAT4 Max(const XMFLOAT4& a, const XMFLOAT4& b) {
+		return XMFLOAT4(std::max(a.x, b.x), std::max(a.y, b.y), std::max(a.z, b.z), std::max(a.w, b.w));
+	}
+	constexpr XMFLOAT2 Min(const XMFLOAT2& a, const XMFLOAT2& b) {
+		return XMFLOAT2(std::min(a.x, b.x), std::min(a.y, b.y));
+	}
 	constexpr XMFLOAT3 Min(const XMFLOAT3& a, const XMFLOAT3& b) {
 		return XMFLOAT3(std::min(a.x, b.x), std::min(a.y, b.y), std::min(a.z, b.z));
+	}
+	constexpr XMFLOAT4 Min(const XMFLOAT4& a, const XMFLOAT4& b) {
+		return XMFLOAT4(std::min(a.x, b.x), std::min(a.y, b.y), std::min(a.z, b.z), std::min(a.w, b.w));
+	}
+	constexpr XMFLOAT2 Abs(const XMFLOAT2& a) {
+		return XMFLOAT2(std::abs(a.x), std::abs(a.y));
+	}
+	constexpr XMFLOAT3 Abs(const XMFLOAT3& a) {
+		return XMFLOAT3(std::abs(a.x), std::abs(a.y), std::abs(a.z));
+	}
+	constexpr XMFLOAT4 Abs(const XMFLOAT4& a) {
+		return XMFLOAT4(std::abs(a.x), std::abs(a.y), std::abs(a.z), std::abs(a.w));
 	}
 	constexpr float Clamp(float val, float min, float max)
 	{
@@ -220,6 +278,15 @@ namespace wi::math
 	float TriangleArea(const XMVECTOR& A, const XMVECTOR& B, const XMVECTOR& C);
 	// a, b, c: trangle side lengths
 	float TriangleArea(float a, float b, float c);
+
+	constexpr float SphereSurfaceArea(float radius)
+	{
+		return 4 * PI * radius * radius;
+	}
+	constexpr float SphereVolume(float radius)
+	{
+		return 4.0f / 3.0f * PI * radius * radius * radius;
+	}
 
 	XMFLOAT3 GetCubicHermiteSplinePos(
 		const XMFLOAT3& startPos,
@@ -308,6 +375,21 @@ namespace wi::math
 		XMFLOAT3PK pk;
 		XMStoreFloat3PK(&pk, XMLoadFloat3(&color));
 		return pk.v;
+	}
+	inline XMFLOAT3 Unpack_R9G9B9E5_SHAREDEXP(uint32_t value)
+	{
+		XMFLOAT3SE se;
+		se.v = value;
+		XMVECTOR V = XMLoadFloat3SE(&se);
+		XMFLOAT3 result;
+		XMStoreFloat3(&result, V);
+		return result;
+	}
+	inline uint32_t Pack_R9G9B9E5_SHAREDEXP(const XMFLOAT3& value)
+	{
+		XMFLOAT3SE se;
+		XMStoreFloat3SE(&se, XMLoadFloat3(&value));
+		return se;
 	}
 
 
