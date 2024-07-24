@@ -9,10 +9,119 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 {
 	editor = _editor;
 
-	wi::gui::Window::Create("Components ", wi::gui::Window::WindowControls::RESIZE_TOPLEFT);
+	wi::gui::Window::Create("Components ", wi::gui::Window::WindowControls::RESIZE_LEFT);
+	SetText("Entity - Component System");
 	font.params.h_align = wi::font::WIFALIGN_RIGHT;
 	SetShadowRadius(2);
 
+	filterCombo.Create("");
+	filterCombo.SetShadowRadius(0);
+	filterCombo.SetMaxVisibleItemCount(16);
+	filterCombo.AddItem("*", (uint64_t)Filter::All);
+	filterCombo.AddItem(ICON_TRANSFORM, (uint64_t)Filter::Transform);
+	filterCombo.AddItem(ICON_MATERIAL, (uint64_t)Filter::Material);
+	filterCombo.AddItem(ICON_MESH, (uint64_t)Filter::Mesh);
+	filterCombo.AddItem(ICON_OBJECT, (uint64_t)Filter::Object);
+	filterCombo.AddItem(ICON_ENVIRONMENTPROBE, (uint64_t)Filter::EnvironmentProbe);
+	filterCombo.AddItem(ICON_DECAL, (uint64_t)Filter::Decal);
+	filterCombo.AddItem(ICON_SOUND, (uint64_t)Filter::Sound);
+	filterCombo.AddItem(ICON_VIDEO, (uint64_t)Filter::Video);
+	filterCombo.AddItem(ICON_WEATHER, (uint64_t)Filter::Weather);
+	filterCombo.AddItem(ICON_POINTLIGHT, (uint64_t)Filter::Light);
+	filterCombo.AddItem(ICON_ANIMATION, (uint64_t)Filter::Animation);
+	filterCombo.AddItem(ICON_FORCE, (uint64_t)Filter::Force);
+	filterCombo.AddItem(ICON_EMITTER, (uint64_t)Filter::Emitter);
+	filterCombo.AddItem(ICON_HAIR, (uint64_t)Filter::Hairparticle);
+	filterCombo.AddItem(ICON_IK, (uint64_t)Filter::IK);
+	filterCombo.AddItem(ICON_CAMERA, (uint64_t)Filter::Camera);
+	filterCombo.AddItem(ICON_ARMATURE, (uint64_t)Filter::Armature);
+	filterCombo.AddItem(ICON_SPRING, (uint64_t)Filter::Spring);
+	filterCombo.AddItem(ICON_COLLIDER, (uint64_t)Filter::Collider);
+	filterCombo.AddItem(ICON_SCRIPT, (uint64_t)Filter::Script);
+	filterCombo.AddItem(ICON_EXPRESSION, (uint64_t)Filter::Expression);
+	filterCombo.AddItem(ICON_HUMANOID, (uint64_t)Filter::Humanoid);
+	filterCombo.AddItem(ICON_TERRAIN, (uint64_t)Filter::Terrain);
+	filterCombo.AddItem(ICON_SPRITE, (uint64_t)Filter::Sprite);
+	filterCombo.AddItem(ICON_FONT, (uint64_t)Filter::Font);
+	filterCombo.AddItem(ICON_VOXELGRID, (uint64_t)Filter::VoxelGrid);
+	filterCombo.AddItem(ICON_RIGIDBODY, (uint64_t)Filter::RigidBody);
+	filterCombo.AddItem(ICON_SOFTBODY, (uint64_t)Filter::SoftBody);
+	filterCombo.SetTooltip("Apply filtering to the Entities by components");
+	filterCombo.SetLocalizationEnabled(wi::gui::LocalizationEnabled::Tooltip);
+	filterCombo.OnSelect([&](wi::gui::EventArgs args) {
+		filter = (Filter)args.userdata;
+		RefreshEntityTree();
+		});
+	AddWidget(&filterCombo);
+
+
+	filterInput.Create("");
+	filterInput.SetShadowRadius(0);
+	filterInput.SetTooltip("Search entities by name");
+	filterInput.SetDescription(ICON_SEARCH "  ");
+	filterInput.SetCancelInputEnabled(false);
+	filterInput.OnInput([=](wi::gui::EventArgs args) {
+		RefreshEntityTree();
+		});
+	filterInput.SetLocalizationEnabled(wi::gui::LocalizationEnabled::Tooltip);
+	AddWidget(&filterInput);
+
+	filterCaseCheckBox.Create("");
+	filterCaseCheckBox.SetShadowRadius(0);
+	filterCaseCheckBox.SetCheckText("Aa");
+	filterCaseCheckBox.SetUnCheckText("a");
+	filterCaseCheckBox.SetTooltip("Toggle case-sensitive name filtering");
+	filterCaseCheckBox.SetLocalizationEnabled(wi::gui::LocalizationEnabled::Tooltip);
+	filterCaseCheckBox.OnClick([=](wi::gui::EventArgs args) {
+		RefreshEntityTree();
+		});
+	AddWidget(&filterCaseCheckBox);
+
+
+	entityTree.Create("Entities");
+	entityTree.SetSize(XMFLOAT2(300, 300));
+	entityTree.OnSelect([this](wi::gui::EventArgs args) {
+
+		if (args.iValue < 0)
+			return;
+
+		wi::Archive& archive = editor->AdvanceHistory();
+		archive << EditorComponent::HISTORYOP_SELECTION;
+		// record PREVIOUS selection state...
+		editor->RecordSelection(archive);
+
+		editor->translator.selected.clear();
+
+		for (int i = 0; i < entityTree.GetItemCount(); ++i)
+		{
+			const wi::gui::TreeList::Item& item = entityTree.GetItem(i);
+			if (item.selected)
+			{
+				wi::scene::PickResult pick;
+				pick.entity = (Entity)item.userdata;
+				editor->AddSelected(pick);
+			}
+		}
+
+		// record NEW selection state...
+		editor->RecordSelection(archive);
+
+		});
+	entityTree.OnDelete([=](wi::gui::EventArgs args) {
+		// Deletions will be performed in a batch next frame:
+		//	We don't delete here, because this callback will execute once for each item
+		editor->deleting = true;
+		});
+	entityTree.OnDoubleClick([this](wi::gui::EventArgs args) {
+		editor->FocusCameraOnSelected();
+		});
+	AddWidget(&entityTree);
+
+	if (editor->main->config.GetSection("layout").Has("entities.height"))
+	{
+		float height = editor->main->config.GetSection("layout").GetFloat("entities.height");
+		entityTree.SetSize(XMFLOAT2(entityTree.GetSize().x, height));
+	}
 
 	materialWnd.Create(editor);
 	weatherWnd.Create(editor);
@@ -44,6 +153,7 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 	terrainWnd.Create(editor);
 	spriteWnd.Create(editor);
 	fontWnd.Create(editor);
+	voxelGridWnd.Create(editor);
 
 	enum ADD_THING
 	{
@@ -72,21 +182,23 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 		ADD_VIDEO,
 		ADD_SPRITE,
 		ADD_FONT,
+		ADD_VOXELGRID,
 	};
 
-	newComponentCombo.Create("Add: ");
-	newComponentCombo.selected_font.anim.typewriter.looped = true;
-	newComponentCombo.selected_font.anim.typewriter.time = 2;
-	newComponentCombo.selected_font.anim.typewriter.character_start = 1;
-	newComponentCombo.SetTooltip("Add a component to the last selected entity.");
-	newComponentCombo.SetInvalidSelectionText("...");
+	newComponentCombo.Create("Add component  ");
+	newComponentCombo.SetDropArrowEnabled(false);
+	newComponentCombo.SetAngularHighlightWidth(3);
+	newComponentCombo.SetShadowRadius(0);
+	newComponentCombo.SetFixedDropWidth(250);
+	newComponentCombo.SetTooltip("Add a component to the selected entity.");
+	newComponentCombo.SetInvalidSelectionText("+");
 	newComponentCombo.AddItem("Name " ICON_NAME, ADD_NAME);
 	newComponentCombo.AddItem("Layer " ICON_LAYER, ADD_LAYER);
 	newComponentCombo.AddItem("Hierarchy " ICON_HIERARCHY, ADD_HIERARCHY);
 	newComponentCombo.AddItem("Transform " ICON_TRANSFORM, ADD_TRANSFORM);
 	newComponentCombo.AddItem("Light " ICON_POINTLIGHT, ADD_LIGHT);
 	newComponentCombo.AddItem("Material " ICON_MATERIAL, ADD_MATERIAL);
-	newComponentCombo.AddItem("Spring", ADD_SPRING);
+	newComponentCombo.AddItem("Spring " ICON_SPRING, ADD_SPRING);
 	newComponentCombo.AddItem("Inverse Kinematics " ICON_IK, ADD_IK);
 	newComponentCombo.AddItem("Sound " ICON_SOUND, ADD_SOUND);
 	newComponentCombo.AddItem("Environment Probe " ICON_ENVIRONMENTPROBE, ADD_ENVPROBE);
@@ -105,248 +217,250 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 	newComponentCombo.AddItem("Video " ICON_VIDEO, ADD_VIDEO);
 	newComponentCombo.AddItem("Sprite " ICON_SPRITE, ADD_SPRITE);
 	newComponentCombo.AddItem("Font " ICON_FONT, ADD_FONT);
+	newComponentCombo.AddItem("Voxel Grid " ICON_VOXELGRID, ADD_VOXELGRID);
 	newComponentCombo.OnSelect([=](wi::gui::EventArgs args) {
 		newComponentCombo.SetSelectedWithoutCallback(-1);
-		if (editor->translator.selected.empty())
-			return;
-		Scene& scene = editor->GetCurrentScene();
-		Entity entity = editor->translator.selected.back().entity;
-		if (args.userdata == ADD_SOFTBODY)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		wi::vector<Entity> entities;
+		for (auto& x : editor->translator.selected)
 		{
-			// explanation: for softbody, we want to create it for the MeshComponent, if it's also selected together with the object:
-			ObjectComponent* object = scene.objects.GetComponent(entity);
-			if (object != nullptr)
+			Entity entity = x.entity;
+			if (args.userdata == ADD_SOFTBODY)
 			{
-				entity = object->meshID;
+				// explanation: for softbody, we want to create it for the MeshComponent, if it's also selected together with the object:
+				ObjectComponent* object = scene.objects.GetComponent(entity);
+				if (object != nullptr)
+				{
+					entity = object->meshID;
+				}
 			}
-		}
-		if (entity == INVALID_ENTITY)
-		{
-			assert(0);
-			return;
-		}
+			if (entity == INVALID_ENTITY)
+				continue;
 
-		// Can early exit before creating history entry!
-		switch (args.userdata)
-		{
-		case ADD_NAME:
-			if (scene.names.Contains(entity))
-				return;
-			break;
-		case ADD_LAYER:
-			if (scene.layers.Contains(entity))
-				return;
-			break;
-		case ADD_TRANSFORM:
-			if (scene.transforms.Contains(entity))
-				return;
-			break;
-		case ADD_LIGHT:
-			if (scene.lights.Contains(entity))
-				return;
-			break;
-		case ADD_MATERIAL:
-			if (scene.materials.Contains(entity))
-				return;
-			break;
-		case ADD_SPRING:
-			if (scene.springs.Contains(entity))
-				return;
-			break;
-		case ADD_IK:
-			if (scene.inverse_kinematics.Contains(entity))
-				return;
-			break;
-		case ADD_SOUND:
-			if (scene.sounds.Contains(entity))
-				return;
-			break;
-		case ADD_ENVPROBE:
-			if (scene.probes.Contains(entity))
-				return;
-			break;
-		case ADD_EMITTER:
-			if (scene.emitters.Contains(entity))
-				return;
-			break;
-		case ADD_HAIR:
-			if (scene.hairs.Contains(entity))
-				return;
-			break;
-		case ADD_DECAL:
-			if (scene.decals.Contains(entity))
-				return;
-			break;
-		case ADD_WEATHER:
-			if (scene.weathers.Contains(entity))
-				return;
-			break;
-		case ADD_FORCE:
-			if (scene.forces.Contains(entity))
-				return;
-			break;
-		case ADD_ANIMATION:
-			if (scene.animations.Contains(entity))
-				return;
-			break;
-		case ADD_SCRIPT:
-			if (scene.scripts.Contains(entity))
-				return;
-			break;
-		case ADD_RIGIDBODY:
-			if (scene.rigidbodies.Contains(entity))
-				return;
-			break;
-		case ADD_SOFTBODY:
-			if (scene.softbodies.Contains(entity))
-				return;
-			break;
-		case ADD_COLLIDER:
-			if (scene.colliders.Contains(entity))
-				return;
-			break;
-		case ADD_HIERARCHY:
-			if (scene.hierarchy.Contains(entity))
-				return;
-			break;
-		case ADD_CAMERA:
-			if (scene.cameras.Contains(entity))
-				return;
-			break;
-		case ADD_OBJECT:
-			if (scene.objects.Contains(entity))
-				return;
-			break;
-		case ADD_VIDEO:
-			if (scene.videos.Contains(entity))
-				return;
-			break;
-		case ADD_SPRITE:
-			if (scene.sprites.Contains(entity))
-				return;
-			break;
-		case ADD_FONT:
-			if (scene.fonts.Contains(entity))
-				return;
-			break;
-		default:
-			return;
+			// Can early exit before creating history entry!
+			bool valid = true;
+			switch (args.userdata)
+			{
+			case ADD_NAME:
+				if (scene.names.Contains(entity))
+					valid = false;
+				break;
+			case ADD_LAYER:
+				if (scene.layers.Contains(entity))
+					valid = false;
+				break;
+			case ADD_TRANSFORM:
+				if (scene.transforms.Contains(entity))
+					valid = false;
+				break;
+			case ADD_LIGHT:
+				if (scene.lights.Contains(entity))
+					valid = false;
+				break;
+			case ADD_MATERIAL:
+				if (scene.materials.Contains(entity))
+					valid = false;
+				break;
+			case ADD_SPRING:
+				if (scene.springs.Contains(entity))
+					valid = false;
+				break;
+			case ADD_IK:
+				if (scene.inverse_kinematics.Contains(entity))
+					valid = false;
+				break;
+			case ADD_SOUND:
+				if (scene.sounds.Contains(entity))
+					valid = false;
+				break;
+			case ADD_ENVPROBE:
+				if (scene.probes.Contains(entity))
+					valid = false;
+				break;
+			case ADD_EMITTER:
+				if (scene.emitters.Contains(entity))
+					valid = false;
+				break;
+			case ADD_HAIR:
+				if (scene.hairs.Contains(entity))
+					valid = false;
+				break;
+			case ADD_DECAL:
+				if (scene.decals.Contains(entity))
+					valid = false;
+				break;
+			case ADD_WEATHER:
+				if (scene.weathers.Contains(entity))
+					valid = false;
+				break;
+			case ADD_FORCE:
+				if (scene.forces.Contains(entity))
+					valid = false;
+				break;
+			case ADD_ANIMATION:
+				if (scene.animations.Contains(entity))
+					valid = false;
+				break;
+			case ADD_SCRIPT:
+				if (scene.scripts.Contains(entity))
+					valid = false;
+				break;
+			case ADD_RIGIDBODY:
+				if (scene.rigidbodies.Contains(entity))
+					valid = false;
+				break;
+			case ADD_SOFTBODY:
+				if (scene.softbodies.Contains(entity))
+					valid = false;
+				break;
+			case ADD_COLLIDER:
+				if (scene.colliders.Contains(entity))
+					valid = false;
+				break;
+			case ADD_HIERARCHY:
+				if (scene.hierarchy.Contains(entity))
+					valid = false;
+				break;
+			case ADD_CAMERA:
+				if (scene.cameras.Contains(entity))
+					valid = false;
+				break;
+			case ADD_OBJECT:
+				if (scene.objects.Contains(entity))
+					valid = false;
+				break;
+			case ADD_VIDEO:
+				if (scene.videos.Contains(entity))
+					valid = false;
+				break;
+			case ADD_SPRITE:
+				if (scene.sprites.Contains(entity))
+					valid = false;
+				break;
+			case ADD_FONT:
+				if (scene.fonts.Contains(entity))
+					valid = false;
+				break;
+			case ADD_VOXELGRID:
+				if (scene.voxel_grids.Contains(entity))
+					valid = false;
+				break;
+			default:
+				valid = false;
+				break;
+			}
+
+			if (valid)
+			{
+				entities.push_back(entity);
+			}
 		}
 
 		wi::Archive& archive = editor->AdvanceHistory();
 		archive << EditorComponent::HISTORYOP_COMPONENT_DATA;
-		editor->RecordEntity(archive, entity);
+		editor->RecordEntity(archive, entities);
 
-		switch (args.userdata)
+		for (Entity entity : entities)
 		{
-		case ADD_NAME:
-			scene.names.Create(entity);
-			break;
-		case ADD_LAYER:
-			scene.layers.Create(entity);
-			break;
-		case ADD_TRANSFORM:
-			scene.transforms.Create(entity);
-			break;
-		case ADD_LIGHT:
-			scene.lights.Create(entity);
-			break;
-		case ADD_MATERIAL:
-			scene.materials.Create(entity);
-			break;
-		case ADD_SPRING:
-			scene.springs.Create(entity);
-
-			// Springs are special because they are computed in ordered fashion
-			//	So if we add a new spring that was parent of an other one, we move it in memory before the child
-			for (size_t i = 0; i < scene.springs.GetCount(); ++i)
+			switch (args.userdata)
 			{
-				Entity other = scene.springs.GetEntity(i);
-				const HierarchyComponent* hier = scene.hierarchy.GetComponent(other);
-				if (hier != nullptr && hier->parentID == entity)
-				{
-					size_t entity_index = scene.springs.GetCount() - 1; // last added entity (the parent)
-					scene.springs.MoveItem(entity_index, i); // will be moved before
-					break;
-				}
-			}
-			break;
-		case ADD_IK:
-			scene.inverse_kinematics.Create(entity);
-			break;
-		case ADD_SOUND:
-			scene.sounds.Create(entity);
-			break;
-		case ADD_ENVPROBE:
-			scene.probes.Create(entity);
-			break;
-		case ADD_EMITTER:
-			if (!scene.materials.Contains(entity))
+			case ADD_NAME:
+				scene.names.Create(entity);
+				break;
+			case ADD_LAYER:
+				scene.layers.Create(entity);
+				break;
+			case ADD_TRANSFORM:
+				scene.transforms.Create(entity);
+				break;
+			case ADD_LIGHT:
+				scene.lights.Create(entity);
+				break;
+			case ADD_MATERIAL:
 				scene.materials.Create(entity);
-			scene.emitters.Create(entity);
-			break;
-		case ADD_HAIR:
-			if (!scene.materials.Contains(entity))
-				scene.materials.Create(entity);
-			scene.hairs.Create(entity);
-			break;
-		case ADD_DECAL:
-			if (!scene.materials.Contains(entity))
-				scene.materials.Create(entity);
-			scene.decals.Create(entity);
-			break;
-		case ADD_WEATHER:
-			scene.weathers.Create(entity);
-			break;
-		case ADD_FORCE:
-			scene.forces.Create(entity);
-			break;
-		case ADD_ANIMATION:
-			scene.animations.Create(entity);
-			break;
-		case ADD_SCRIPT:
-			scene.scripts.Create(entity);
-			break;
-		case ADD_RIGIDBODY:
+				break;
+			case ADD_SPRING:
+				scene.springs.Create(entity);
+				break;
+			case ADD_IK:
+				scene.inverse_kinematics.Create(entity);
+				break;
+			case ADD_SOUND:
+				scene.sounds.Create(entity);
+				break;
+			case ADD_ENVPROBE:
+				scene.probes.Create(entity);
+				break;
+			case ADD_EMITTER:
+				if (!scene.materials.Contains(entity))
+					scene.materials.Create(entity);
+				scene.emitters.Create(entity);
+				break;
+			case ADD_HAIR:
+				if (!scene.materials.Contains(entity))
+					scene.materials.Create(entity);
+				scene.hairs.Create(entity);
+				break;
+			case ADD_DECAL:
+				if (!scene.materials.Contains(entity))
+					scene.materials.Create(entity);
+				scene.decals.Create(entity);
+				break;
+			case ADD_WEATHER:
+				scene.weathers.Create(entity);
+				break;
+			case ADD_FORCE:
+				scene.forces.Create(entity);
+				break;
+			case ADD_ANIMATION:
+				scene.animations.Create(entity);
+				break;
+			case ADD_SCRIPT:
+				scene.scripts.Create(entity);
+				break;
+			case ADD_RIGIDBODY:
 			{
 				RigidBodyPhysicsComponent& rigidbody = scene.rigidbodies.Create(entity);
-				rigidbody.SetKinematic(true); // Set it to kinematic so that it doesn't immediately fall
-				rigidbody.SetDisableDeactivation(true);
+				rigidbody.SetKinematic(true); // Set it to kinematic so that it can be easily placed
 			}
 			break;
-		case ADD_SOFTBODY:
-			scene.softbodies.Create(entity);
-			break;
-		case ADD_COLLIDER:
-			scene.colliders.Create(entity);
-			break;
-		case ADD_HIERARCHY:
-			scene.hierarchy.Create(entity);
-			break;
-		case ADD_CAMERA:
-			scene.cameras.Create(entity);
-			break;
-		case ADD_OBJECT:
-			scene.objects.Create(entity);
-			break;
-		case ADD_VIDEO:
-			scene.videos.Create(entity);
-			break;
-		case ADD_SPRITE:
-			scene.sprites.Create(entity);
-			break;
-		case ADD_FONT:
-			scene.fonts.Create(entity);
-			break;
-		default:
-			break;
+			case ADD_SOFTBODY:
+				scene.softbodies.Create(entity);
+				break;
+			case ADD_COLLIDER:
+				scene.colliders.Create(entity);
+				break;
+			case ADD_HIERARCHY:
+				scene.hierarchy.Create(entity);
+				break;
+			case ADD_CAMERA:
+				scene.cameras.Create(entity);
+				break;
+			case ADD_OBJECT:
+				scene.objects.Create(entity);
+				break;
+			case ADD_VIDEO:
+				scene.videos.Create(entity);
+				break;
+			case ADD_SPRITE:
+				scene.sprites.Create(entity);
+				break;
+			case ADD_FONT:
+				scene.fonts.Create(entity);
+				break;
+			case ADD_VOXELGRID:
+				scene.voxel_grids.Create(entity);
+				break;
+			default:
+				break;
+			}
 		}
 
-		editor->RecordEntity(archive, entity);
+		editor->RecordEntity(archive, entities);
 
-		editor->optionsWnd.RefreshEntityTree();
+		RefreshEntityTree();
 
-		});
+	});
 	AddWidget(&newComponentCombo);
 
 
@@ -380,6 +494,7 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 	AddWidget(&terrainWnd);
 	AddWidget(&spriteWnd);
 	AddWidget(&fontWnd);
+	AddWidget(&voxelGridWnd);
 
 	materialWnd.SetVisible(false);
 	weatherWnd.SetVisible(false);
@@ -411,15 +526,12 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 	terrainWnd.SetVisible(false);
 	spriteWnd.SetVisible(false);
 	fontWnd.SetVisible(false);
+	voxelGridWnd.SetVisible(false);
 
 	XMFLOAT2 size = XMFLOAT2(338, 500);
 	if (editor->main->config.GetSection("layout").Has("components.width"))
 	{
 		size.x = editor->main->config.GetSection("layout").GetFloat("components.width");
-	}
-	if (editor->main->config.GetSection("layout").Has("components.height"))
-	{
-		size.y = editor->main->config.GetSection("layout").GetFloat("components.height");
 	}
 	SetSize(size);
 }
@@ -433,24 +545,51 @@ void ComponentsWindow::ResizeLayout()
 {
 	wi::gui::Window::ResizeLayout();
 	const wi::scene::Scene& scene = editor->GetCurrentScene();
-	const float padding = 4;
-	XMFLOAT2 pos = XMFLOAT2(padding, padding);
-	const float width = GetWidgetAreaSize().x - padding * 2;
+	float padding = 2;
+	XMFLOAT2 pos = XMFLOAT2(padding, 0);
+	const float width = GetWidgetAreaSize().x - padding;
+	const float height = GetWidgetAreaSize().y - padding * 2;
 	editor->main->config.GetSection("layout").Set("components.width", GetSize().x);
-	editor->main->config.GetSection("layout").Set("components.height", GetSize().y);
+	editor->main->config.GetSection("layout").Set("entities.height", entityTree.GetSize().y);
+
+	// Entities:
+	{
+		float x_off = 25;
+		float filterHeight = filterCombo.GetSize().y;
+		float filterComboWidth = 30;
+
+		filterInput.SetPos(XMFLOAT2(pos.x + x_off, pos.y));
+		filterInput.SetSize(XMFLOAT2(width - x_off - filterHeight - 5 - filterComboWidth - filterHeight, filterCombo.GetScale().y));
+
+		filterCaseCheckBox.SetPos(XMFLOAT2(filterInput.GetPos().x + filterInput.GetSize().x + 1, pos.y));
+		filterCaseCheckBox.SetSize(XMFLOAT2(filterHeight, filterHeight));
+
+		filterCombo.SetPos(XMFLOAT2(filterCaseCheckBox.GetPos().x + filterCaseCheckBox.GetSize().x + 1, pos.y));
+		filterCombo.SetSize(XMFLOAT2(filterComboWidth, filterHeight));
+		pos.y += filterCombo.GetSize().y;
+		pos.y += padding;
+
+		pos.x = 0;
+		entityTree.SetPos(pos);
+		entityTree.SetSize(XMFLOAT2(width, wi::math::Clamp(entityTree.GetSize().y, 0, height - pos.y - 50)));
+		pos.y += entityTree.GetSize().y;
+		pos.y += padding * 4;
+	}
 
 	if (!editor->translator.selected.empty())
 	{
 		newComponentCombo.SetVisible(true);
-		newComponentCombo.SetPos(XMFLOAT2(pos.x + 35, pos.y));
-		newComponentCombo.SetSize(XMFLOAT2(width - 35 - 21, 20));
+		newComponentCombo.SetSize(XMFLOAT2(20, 20));
+		newComponentCombo.SetPos(XMFLOAT2(pos.x + width - 30, pos.y));
 		pos.y += newComponentCombo.GetSize().y;
-		pos.y += padding;
+		pos.y += padding * 4;
 	}
 	else
 	{
 		newComponentCombo.SetVisible(false);
 	}
+
+	padding = 1;
 
 	if (scene.names.Contains(nameWnd.entity))
 	{
@@ -854,4 +993,312 @@ void ComponentsWindow::ResizeLayout()
 	{
 		fontWnd.SetVisible(false);
 	}
+
+	if (scene.voxel_grids.Contains(voxelGridWnd.entity))
+	{
+		voxelGridWnd.SetVisible(true);
+		voxelGridWnd.SetPos(pos);
+		voxelGridWnd.SetSize(XMFLOAT2(width, voxelGridWnd.GetScale().y));
+		pos.y += voxelGridWnd.GetSize().y;
+		pos.y += padding;
+	}
+	else
+	{
+		voxelGridWnd.SetVisible(false);
+	}
+}
+
+
+void ComponentsWindow::PushToEntityTree(wi::ecs::Entity entity, int level)
+{
+	if (entitytree_added_items.count(entity) != 0)
+	{
+		return;
+	}
+	const Scene& scene = editor->GetCurrentScene();
+
+	if (CheckEntityFilter(entity))
+	{
+		wi::gui::TreeList::Item item;
+		if (filter == Filter::All)
+		{
+			item.level = level;
+		}
+		else
+		{
+			item.level = 0;
+		}
+		item.userdata = entity;
+		item.selected = editor->IsSelected(entity);
+		item.open = entitytree_opened_items.count(entity) != 0;
+
+		const NameComponent* name = scene.names.GetComponent(entity);
+
+		std::string name_string;
+		if (name == nullptr)
+		{
+			name_string = "[no_name] " + std::to_string(entity);
+		}
+		else if (name->name.empty())
+		{
+			name_string = "[name_empty] " + std::to_string(entity);
+		}
+		else
+		{
+			name_string = name->name;
+		}
+
+		std::string name_filter = filterInput.GetCurrentInputValue();
+		if (!name_filter.empty())
+		{
+			if (filterCaseCheckBox.GetCheck() && name_string.find(name_filter) == std::string::npos)
+			{
+				return;
+			}
+			else if (wi::helper::toUpper(name_string).find(wi::helper::toUpper(name_filter)) == std::string::npos)
+			{
+				return;
+			}
+		}
+
+		// Icons:
+		if (scene.layers.Contains(entity))
+		{
+			item.name += ICON_LAYER " ";
+		}
+		if (scene.transforms.Contains(entity))
+		{
+			item.name += ICON_TRANSFORM " ";
+		}
+		if (scene.terrains.Contains(entity))
+		{
+			item.name += ICON_TERRAIN " ";
+		}
+		if (scene.meshes.Contains(entity))
+		{
+			item.name += ICON_MESH " ";
+		}
+		if (scene.objects.Contains(entity))
+		{
+			item.name += ICON_OBJECT " ";
+		}
+		if (scene.rigidbodies.Contains(entity))
+		{
+			item.name += ICON_RIGIDBODY " ";
+		}
+		if (scene.softbodies.Contains(entity))
+		{
+			item.name += ICON_SOFTBODY " ";
+		}
+		if (scene.emitters.Contains(entity))
+		{
+			item.name += ICON_EMITTER " ";
+		}
+		if (scene.hairs.Contains(entity))
+		{
+			item.name += ICON_HAIR " ";
+		}
+		if (scene.forces.Contains(entity))
+		{
+			item.name += ICON_FORCE " ";
+		}
+		if (scene.sounds.Contains(entity))
+		{
+			item.name += ICON_SOUND " ";
+		}
+		if (scene.videos.Contains(entity))
+		{
+			item.name += ICON_VIDEO " ";
+		}
+		if (scene.decals.Contains(entity))
+		{
+			item.name += ICON_DECAL " ";
+		}
+		if (scene.cameras.Contains(entity))
+		{
+			item.name += ICON_CAMERA " ";
+		}
+		if (scene.probes.Contains(entity))
+		{
+			item.name += ICON_ENVIRONMENTPROBE " ";
+		}
+		if (scene.animations.Contains(entity))
+		{
+			item.name += ICON_ANIMATION " ";
+		}
+		if (scene.animation_datas.Contains(entity))
+		{
+			item.name += "[animation_data] ";
+		}
+		if (scene.armatures.Contains(entity))
+		{
+			item.name += ICON_ARMATURE " ";
+		}
+		if (scene.humanoids.Contains(entity))
+		{
+			item.name += ICON_HUMANOID " ";
+		}
+		if (scene.sprites.Contains(entity))
+		{
+			item.name += ICON_SPRITE " ";
+		}
+		if (scene.fonts.Contains(entity))
+		{
+			item.name += ICON_FONT " ";
+		}
+		if (scene.voxel_grids.Contains(entity))
+		{
+			item.name += ICON_VOXELGRID " ";
+		}
+		if (scene.lights.Contains(entity))
+		{
+			const LightComponent* light = scene.lights.GetComponent(entity);
+			switch (light->type)
+			{
+			default:
+			case LightComponent::POINT:
+				item.name += ICON_POINTLIGHT " ";
+				break;
+			case LightComponent::SPOT:
+				item.name += ICON_SPOTLIGHT " ";
+				break;
+			case LightComponent::DIRECTIONAL:
+				item.name += ICON_DIRECTIONALLIGHT " ";
+				break;
+			}
+		}
+		if (scene.materials.Contains(entity))
+		{
+			item.name += ICON_MATERIAL " ";
+		}
+		if (scene.weathers.Contains(entity))
+		{
+			item.name += ICON_WEATHER " ";
+		}
+		if (scene.inverse_kinematics.Contains(entity))
+		{
+			item.name += ICON_IK " ";
+		}
+		if (scene.springs.Contains(entity))
+		{
+			item.name += ICON_SPRING " ";
+		}
+		if (scene.colliders.Contains(entity))
+		{
+			item.name += ICON_COLLIDER " ";
+		}
+		if (scene.scripts.Contains(entity))
+		{
+			item.name += ICON_SCRIPT " ";
+		}
+		if (scene.expressions.Contains(entity))
+		{
+			item.name += ICON_EXPRESSION " ";
+		}
+		bool bone_found = false;
+		for (size_t i = 0; i < scene.armatures.GetCount() && !bone_found; ++i)
+		{
+			const ArmatureComponent& armature = scene.armatures[i];
+			for (Entity bone : armature.boneCollection)
+			{
+				if (entity == bone)
+				{
+					item.name += ICON_BONE " ";
+					bone_found = true;
+					break;
+				}
+			}
+		}
+
+		item.name += name_string;
+		entityTree.AddItem(item);
+
+		entitytree_added_items.insert(entity);
+	}
+
+	for (size_t i = 0; i < scene.hierarchy.GetCount(); ++i)
+	{
+		if (scene.hierarchy[i].parentID == entity)
+		{
+			PushToEntityTree(scene.hierarchy.GetEntity(i), level + 1);
+		}
+	}
+}
+void ComponentsWindow::RefreshEntityTree()
+{
+	if (editor == nullptr)
+		return;
+	const Scene& scene = editor->GetCurrentScene();
+	editor->materialPickerWnd.RecreateButtons();
+
+	for (int i = 0; i < entityTree.GetItemCount(); ++i)
+	{
+		const wi::gui::TreeList::Item& item = entityTree.GetItem(i);
+		if (item.open)
+		{
+			entitytree_opened_items.insert((Entity)item.userdata);
+		}
+	}
+
+	entityTree.ClearItems();
+
+	entitytree_temp_items.clear();
+	scene.FindAllEntities(entitytree_temp_items);
+
+	// Add items to level 0 that are not in hierarchy (not in hierarchy can also mean top level parent):
+	//	Note that PushToEntityTree will add children recursively, so this is all we need
+	for (auto& x : entitytree_temp_items)
+	{
+		const HierarchyComponent* hier = scene.hierarchy.GetComponent(x);
+		if (hier == nullptr || hier->parentID == INVALID_ENTITY)
+		{
+			PushToEntityTree(x, 0);
+		}
+	}
+
+	entitytree_added_items.clear();
+	entitytree_opened_items.clear();
+}
+bool ComponentsWindow::CheckEntityFilter(wi::ecs::Entity entity)
+{
+	if (filter == Filter::All)
+		return true;
+
+	const Scene& scene = editor->GetCurrentScene();
+	bool valid = false;
+
+	if (
+		has_flag(filter, Filter::Transform) && scene.transforms.Contains(entity) ||
+		has_flag(filter, Filter::Material) && scene.materials.Contains(entity) ||
+		has_flag(filter, Filter::Mesh) && scene.meshes.Contains(entity) ||
+		has_flag(filter, Filter::Object) && scene.objects.Contains(entity) ||
+		has_flag(filter, Filter::EnvironmentProbe) && scene.probes.Contains(entity) ||
+		has_flag(filter, Filter::Decal) && scene.decals.Contains(entity) ||
+		has_flag(filter, Filter::Sound) && scene.sounds.Contains(entity) ||
+		has_flag(filter, Filter::Weather) && scene.weathers.Contains(entity) ||
+		has_flag(filter, Filter::Light) && scene.lights.Contains(entity) ||
+		has_flag(filter, Filter::Animation) && scene.animations.Contains(entity) ||
+		has_flag(filter, Filter::Force) && scene.forces.Contains(entity) ||
+		has_flag(filter, Filter::Emitter) && scene.emitters.Contains(entity) ||
+		has_flag(filter, Filter::IK) && scene.inverse_kinematics.Contains(entity) ||
+		has_flag(filter, Filter::Camera) && scene.cameras.Contains(entity) ||
+		has_flag(filter, Filter::Armature) && scene.armatures.Contains(entity) ||
+		has_flag(filter, Filter::Collider) && scene.colliders.Contains(entity) ||
+		has_flag(filter, Filter::Script) && scene.scripts.Contains(entity) ||
+		has_flag(filter, Filter::Expression) && scene.expressions.Contains(entity) ||
+		has_flag(filter, Filter::Terrain) && scene.terrains.Contains(entity) ||
+		has_flag(filter, Filter::Spring) && scene.springs.Contains(entity) ||
+		has_flag(filter, Filter::Humanoid) && scene.humanoids.Contains(entity) ||
+		has_flag(filter, Filter::Video) && scene.videos.Contains(entity) ||
+		has_flag(filter, Filter::Sprite) && scene.sprites.Contains(entity) ||
+		has_flag(filter, Filter::Font) && scene.fonts.Contains(entity) ||
+		has_flag(filter, Filter::VoxelGrid) && scene.voxel_grids.Contains(entity) ||
+		has_flag(filter, Filter::RigidBody) && scene.rigidbodies.Contains(entity) ||
+		has_flag(filter, Filter::SoftBody) && scene.softbodies.Contains(entity)
+		)
+	{
+		valid = true;
+	}
+
+	return valid;
 }

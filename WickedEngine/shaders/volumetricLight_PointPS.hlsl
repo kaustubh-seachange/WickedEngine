@@ -2,17 +2,32 @@
 #define TRANSPARENT_SHADOWMAP_SECONDARY_DEPTH_CHECK // fix the lack of depth testing
 #include "volumetricLightHF.hlsli"
 #include "fogHF.hlsli"
+#include "oceanSurfaceHF.hlsli"
 
 float4 main(VertexToPixel input) : SV_TARGET
 {
 	ShaderEntity light = load_entity(GetFrame().lightarray_offset + (uint)g_xColor.x);
 
 	float2 ScreenCoord = input.pos2D.xy / input.pos2D.w * float2(0.5f, -0.5f) + 0.5f;
-	float depth = max(input.pos.z, texture_depth.SampleLevel(sampler_point_clamp, ScreenCoord, 0));
+	float4 depths = texture_depth.GatherRed(sampler_point_clamp, ScreenCoord);
+	float depth = max(input.pos.z, max(depths.x, max(depths.y, max(depths.z, depths.w))));
 	float3 P = reconstruct_position(ScreenCoord, depth);
 	float3 V = GetCamera().position - P;
 	float cameraDistance = length(V);
 	V /= cameraDistance;
+
+	// Fix for ocean: because ocean is not in linear depth, we trace it instead
+	const ShaderOcean ocean = GetWeather().ocean;
+	if(ocean.IsValid() && V.y > 0)
+	{
+		float3 ocean_surface_pos = intersectPlaneClampInfinite(GetCamera().position, V, float3(0, 1, 0), ocean.water_height);
+		float dist = distance(ocean_surface_pos, GetCamera().position);
+		if(dist < cameraDistance)
+		{
+			P = ocean_surface_pos;
+			cameraDistance = dist;
+		}
+	}
 
 	float marchedDistance = 0;
 	float3 accumulation = 0;
@@ -26,7 +41,7 @@ float4 main(VertexToPixel input) : SV_TARGET
 	}
 
 	const uint sampleCount = 16;
-	const float stepSize = length(P - rayEnd) / sampleCount;
+	const float stepSize = distance(rayEnd, P) / sampleCount;
 
 	// dither ray start to help with undersampling:
 	P = P + V * stepSize * dither(input.pos.xy);
@@ -43,7 +58,7 @@ float4 main(VertexToPixel input) : SV_TARGET
 
 		const float range = light.GetRange();
 		const float range2 = range * range;
-		float3 attenuation = attenuation_pointlight(dist, dist2, range, range2);
+		float3 attenuation = attenuation_pointlight(dist2, range, range2);
 
 		[branch]
 		if (light.IsCastingShadow())

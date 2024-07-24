@@ -21,8 +21,8 @@ void HairParticleWindow::Create(EditorComponent* _editor)
 
 		editor->RecordEntity(archive, entity);
 
-		editor->optionsWnd.RefreshEntityTree();
-		});
+		editor->componentsWnd.RefreshEntityTree();
+	});
 
 	float x = 120;
 	float y = 0;
@@ -39,9 +39,12 @@ void HairParticleWindow::Create(EditorComponent* _editor)
 	meshComboBox.SetPos(XMFLOAT2(x, y));
 	meshComboBox.SetEnabled(false);
 	meshComboBox.OnSelect([&](wi::gui::EventArgs args) {
-		auto hair = GetHair();
-		if (hair != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			wi::HairParticleSystem* hair = scene.hairs.GetComponent(x.entity);
+			if (hair == nullptr)
+				continue;
 			if (args.iValue == 0)
 			{
 				hair->meshID = INVALID_ENTITY;
@@ -51,6 +54,7 @@ void HairParticleWindow::Create(EditorComponent* _editor)
 				Scene& scene = editor->GetCurrentScene();
 				hair->meshID = scene.meshes.GetEntity(args.iValue - 1);
 			}
+			hair->SetDirty();
 		}
 	});
 	meshComboBox.SetTooltip("Choose a mesh where hair will grow from...");
@@ -60,10 +64,14 @@ void HairParticleWindow::Create(EditorComponent* _editor)
 	countSlider.SetSize(XMFLOAT2(wid, hei));
 	countSlider.SetPos(XMFLOAT2(x, y += step));
 	countSlider.OnSlide([&](wi::gui::EventArgs args) {
-		auto hair = GetHair();
-		if (hair != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			wi::HairParticleSystem* hair = scene.hairs.GetComponent(x.entity);
+			if (hair == nullptr)
+				continue;
 			hair->strandCount = (uint32_t)args.iValue;
+			hair->SetDirty();
 		}
 	});
 	countSlider.SetEnabled(false);
@@ -74,10 +82,14 @@ void HairParticleWindow::Create(EditorComponent* _editor)
 	lengthSlider.SetSize(XMFLOAT2(wid, hei));
 	lengthSlider.SetPos(XMFLOAT2(x, y += step));
 	lengthSlider.OnSlide([&](wi::gui::EventArgs args) {
-		auto hair = GetHair();
-		if (hair != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			wi::HairParticleSystem* hair = scene.hairs.GetComponent(x.entity);
+			if (hair == nullptr)
+				continue;
 			hair->length = args.fValue;
+			hair->SetDirty();
 		}
 	});
 	lengthSlider.SetEnabled(false);
@@ -88,10 +100,14 @@ void HairParticleWindow::Create(EditorComponent* _editor)
 	stiffnessSlider.SetSize(XMFLOAT2(wid, hei));
 	stiffnessSlider.SetPos(XMFLOAT2(x, y += step));
 	stiffnessSlider.OnSlide([&](wi::gui::EventArgs args) {
-		auto hair = GetHair();
-		if (hair != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			wi::HairParticleSystem* hair = scene.hairs.GetComponent(x.entity);
+			if (hair == nullptr)
+				continue;
 			hair->stiffness = args.fValue;
+			hair->SetDirty();
 		}
 	});
 	stiffnessSlider.SetEnabled(false);
@@ -102,10 +118,14 @@ void HairParticleWindow::Create(EditorComponent* _editor)
 	randomnessSlider.SetSize(XMFLOAT2(wid, hei));
 	randomnessSlider.SetPos(XMFLOAT2(x, y += step));
 	randomnessSlider.OnSlide([&](wi::gui::EventArgs args) {
-		auto hair = GetHair();
-		if (hair != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			wi::HairParticleSystem* hair = scene.hairs.GetComponent(x.entity);
+			if (hair == nullptr)
+				continue;
 			hair->randomness = args.fValue;
+			hair->SetDirty();
 		}
 	});
 	randomnessSlider.SetEnabled(false);
@@ -116,9 +136,12 @@ void HairParticleWindow::Create(EditorComponent* _editor)
 	//segmentcountSlider.SetSize(XMFLOAT2(wid, hei));
 	//segmentcountSlider.SetPos(XMFLOAT2(x, y += step));
 	//segmentcountSlider.OnSlide([&](wi::gui::EventArgs args) {
-	//	auto hair = GetHair();
-	//	if (hair != nullptr)
+	//	wi::scene::Scene& scene = editor->GetCurrentScene();
+	//	for (auto& x : editor->translator.selected)
 	//	{
+	//		wi::HairParticleSystem* hair = scene.hairs.GetComponent(x.entity);
+	//		if (hair == nullptr)
+	//			continue;
 	//		hair->segmentCount = (uint32_t)args.iValue;
 	//	}
 	//});
@@ -130,10 +153,14 @@ void HairParticleWindow::Create(EditorComponent* _editor)
 	randomSeedSlider.SetSize(XMFLOAT2(wid, hei));
 	randomSeedSlider.SetPos(XMFLOAT2(x, y += step));
 	randomSeedSlider.OnSlide([&](wi::gui::EventArgs args) {
-		auto hair = GetHair();
-		if (hair != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			wi::HairParticleSystem* hair = scene.hairs.GetComponent(x.entity);
+			if (hair == nullptr)
+				continue;
 			hair->randomSeed = (uint32_t)args.iValue;
+			hair->SetDirty();
 		}
 	});
 	randomSeedSlider.SetEnabled(false);
@@ -144,10 +171,14 @@ void HairParticleWindow::Create(EditorComponent* _editor)
 	viewDistanceSlider.SetSize(XMFLOAT2(wid, hei));
 	viewDistanceSlider.SetPos(XMFLOAT2(x, y += step));
 	viewDistanceSlider.OnSlide([&](wi::gui::EventArgs args) {
-		auto hair = GetHair();
-		if (hair != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			wi::HairParticleSystem* hair = scene.hairs.GetComponent(x.entity);
+			if (hair == nullptr)
+				continue;
 			hair->viewDistance = args.fValue;
+			hair->SetDirty();
 		}
 		});
 	viewDistanceSlider.SetEnabled(false);
@@ -161,10 +192,14 @@ void HairParticleWindow::Create(EditorComponent* _editor)
 	framesXInput.SetTooltip("How many horizontal frames there are in the spritesheet.");
 	framesXInput.SetDescription("Frames: ");
 	framesXInput.OnInputAccepted([this](wi::gui::EventArgs args) {
-		auto hair = GetHair();
-		if (hair != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			wi::HairParticleSystem* hair = scene.hairs.GetComponent(x.entity);
+			if (hair == nullptr)
+				continue;
 			hair->framesX = (uint32_t)args.iValue;
+			hair->SetDirty();
 		}
 	});
 	AddWidget(&framesXInput);
@@ -175,12 +210,16 @@ void HairParticleWindow::Create(EditorComponent* _editor)
 	framesYInput.SetText("");
 	framesYInput.SetTooltip("How many vertical frames there are in the spritesheet.");
 	framesYInput.OnInputAccepted([this](wi::gui::EventArgs args) {
-		auto hair = GetHair();
-		if (hair != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			wi::HairParticleSystem* hair = scene.hairs.GetComponent(x.entity);
+			if (hair == nullptr)
+				continue;
 			hair->framesY = (uint32_t)args.iValue;
+			hair->SetDirty();
 		}
-		});
+	});
 	AddWidget(&framesYInput);
 
 	step = 20;
@@ -192,12 +231,16 @@ void HairParticleWindow::Create(EditorComponent* _editor)
 	frameCountInput.SetTooltip("Enter a value to enable the random sprite sheet frame selection's max frame number.");
 	frameCountInput.SetDescription("Frame Count: ");
 	frameCountInput.OnInputAccepted([this](wi::gui::EventArgs args) {
-		auto hair = GetHair();
-		if (hair != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			wi::HairParticleSystem* hair = scene.hairs.GetComponent(x.entity);
+			if (hair == nullptr)
+				continue;
 			hair->frameCount = (uint32_t)args.iValue;
+			hair->SetDirty();
 		}
-		});
+	});
 	AddWidget(&frameCountInput);
 
 	frameStartInput.Create("");
@@ -207,12 +250,16 @@ void HairParticleWindow::Create(EditorComponent* _editor)
 	frameStartInput.SetTooltip("Specifies the first frame of the sheet that can be used.");
 	frameStartInput.SetDescription("First Frame: ");
 	frameStartInput.OnInputAccepted([this](wi::gui::EventArgs args) {
-		auto hair = GetHair();
-		if (hair != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			wi::HairParticleSystem* hair = scene.hairs.GetComponent(x.entity);
+			if (hair == nullptr)
+				continue;
 			hair->frameStart = (uint32_t)args.iValue;
+			hair->SetDirty();
 		}
-		});
+	});
 	AddWidget(&frameStartInput);
 
 
@@ -287,8 +334,21 @@ void HairParticleWindow::UpdateData()
 	for (size_t i = 0; i < scene.meshes.GetCount(); ++i)
 	{
 		Entity entity = scene.meshes.GetEntity(i);
-		const NameComponent& name = *scene.names.GetComponent(entity);
-		meshComboBox.AddItem(name.name);
+		const NameComponent* name = scene.names.GetComponent(entity);
+		std::string name_string;
+		if (name == nullptr)
+		{
+			name_string = "[no_name] " + std::to_string(entity);
+		}
+		else if (name->name.empty())
+		{
+			name_string = "[name_empty] " + std::to_string(entity);
+		}
+		else
+		{
+			name_string = name->name;
+		}
+		meshComboBox.AddItem(name_string);
 
 		if (hair->meshID == entity)
 		{

@@ -13,6 +13,7 @@ namespace wi::lua
 		lunamethod(ImageParams_BindLua, GetRotation),
 		lunamethod(ImageParams_BindLua, GetTexOffset),
 		lunamethod(ImageParams_BindLua, GetTexOffset2),
+		lunamethod(ImageParams_BindLua, GetBorderSoften),
 		lunamethod(ImageParams_BindLua, GetDrawRect),
 		lunamethod(ImageParams_BindLua, GetDrawRect2),
 		lunamethod(ImageParams_BindLua, IsDrawRectEnabled),
@@ -20,6 +21,7 @@ namespace wi::lua
 		lunamethod(ImageParams_BindLua, IsMirrorEnabled),
 		lunamethod(ImageParams_BindLua, IsBackgroundBlurEnabled),
 		lunamethod(ImageParams_BindLua, IsBackgroundEnabled),
+		lunamethod(ImageParams_BindLua, IsDistortionMaskEnabled),
 
 		lunamethod(ImageParams_BindLua, SetPos),
 		lunamethod(ImageParams_BindLua, SetSize),
@@ -35,6 +37,7 @@ namespace wi::lua
 		lunamethod(ImageParams_BindLua, SetRotation),
 		lunamethod(ImageParams_BindLua, SetTexOffset),
 		lunamethod(ImageParams_BindLua, SetTexOffset2),
+		lunamethod(ImageParams_BindLua, SetBorderSoften),
 		lunamethod(ImageParams_BindLua, EnableDrawRect),
 		lunamethod(ImageParams_BindLua, EnableDrawRect2),
 		lunamethod(ImageParams_BindLua, DisableDrawRect),
@@ -45,6 +48,10 @@ namespace wi::lua
 		lunamethod(ImageParams_BindLua, DisableBackgroundBlur),
 		lunamethod(ImageParams_BindLua, EnableBackground),
 		lunamethod(ImageParams_BindLua, DisableBackground),
+		lunamethod(ImageParams_BindLua, EnableDistortionMask),
+		lunamethod(ImageParams_BindLua, DisableDistortionMask),
+		lunamethod(ImageParams_BindLua, SetMaskAlphaRange),
+		lunamethod(ImageParams_BindLua, GetMaskAlphaRange),
 		{ nullptr, nullptr }
 	};
 	Luna<ImageParams_BindLua>::PropertyType ImageParams_BindLua::properties[] = {
@@ -110,6 +117,11 @@ namespace wi::lua
 		Luna<Vector_BindLua>::push(L, XMLoadFloat2(&params.texOffset2));
 		return 1;
 	}
+	int ImageParams_BindLua::GetBorderSoften(lua_State* L)
+	{
+		wi::lua::SSetFloat(L, params.border_soften);
+		return 1;
+	}
 	int ImageParams_BindLua::GetDrawRect(lua_State* L)
 	{
 		Luna<Vector_BindLua>::push(L, XMLoadFloat4(&params.drawRect));
@@ -143,6 +155,11 @@ namespace wi::lua
 	int ImageParams_BindLua::IsBackgroundEnabled(lua_State* L)
 	{
 		wi::lua::SSetBool(L, params.isBackgroundEnabled());
+		return 1;
+	}
+	int ImageParams_BindLua::IsDistortionMaskEnabled(lua_State* L)
+	{
+		wi::lua::SSetBool(L, params.isDistortionMaskEnabled());
 		return 1;
 	}
 
@@ -353,6 +370,19 @@ namespace wi::lua
 		}
 		return 0;
 	}
+	int ImageParams_BindLua::SetBorderSoften(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 0)
+		{
+			params.border_soften = wi::lua::SGetFloat(L, 1);
+		}
+		else
+		{
+			wi::lua::SError(L, "SetBorderSoften(float alpha) not enough arguments!");
+		}
+		return 0;
+	}
 	int ImageParams_BindLua::EnableDrawRect(lua_State* L)
 	{
 		int argc = wi::lua::SGetArgCount(L);
@@ -430,6 +460,34 @@ namespace wi::lua
 	{
 		params.disableBackground();
 		return 0;
+	}
+	int ImageParams_BindLua::EnableDistortionMask(lua_State* L)
+	{
+		params.enableDistortionMask();
+		return 0;
+	}
+	int ImageParams_BindLua::DisableDistortionMask(lua_State* L)
+	{
+		params.disableDistortionMask();
+		return 0;
+	}
+	int ImageParams_BindLua::SetMaskAlphaRange(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc < 2)
+		{
+			wi::lua::SError(L, "SetMaskAlphaRange(float start, end): not enough arguments!");
+			return 0;
+		}
+		params.mask_alpha_range_start = wi::lua::SGetFloat(L, 1);
+		params.mask_alpha_range_end = wi::lua::SGetFloat(L, 2);
+		return 0;
+	}
+	int ImageParams_BindLua::GetMaskAlphaRange(lua_State* L)
+	{
+		wi::lua::SSetFloat(L, params.mask_alpha_range_start);
+		wi::lua::SSetFloat(L, params.mask_alpha_range_end);
+		return 2;
 	}
 
 	ImageParams_BindLua::ImageParams_BindLua(lua_State* L)

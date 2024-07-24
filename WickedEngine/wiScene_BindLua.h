@@ -4,6 +4,8 @@
 #include "wiScene.h"
 #include "wiMath_BindLua.h"
 
+#include <memory>
+
 namespace wi::lua::scene
 {
 	// If the application doesn't use the global scene, but manages it manually,
@@ -20,7 +22,7 @@ namespace wi::lua::scene
 	class Scene_BindLua
 	{
 	private:
-		wi::scene::Scene owning;
+		std::unique_ptr<wi::scene::Scene> owning; // GetScene() is too slow if scene object is always constructed
 	public:
 		wi::scene::Scene* scene = nullptr;
 
@@ -29,25 +31,29 @@ namespace wi::lua::scene
 		static Luna<Scene_BindLua>::PropertyType properties[];
 
 		Scene_BindLua(wi::scene::Scene* scene) :scene(scene) {}
-		Scene_BindLua(lua_State* L) : scene(&owning) {}
+		Scene_BindLua(lua_State* L) : owning(std::make_unique<wi::scene::Scene>()), scene(owning.get()) {}
 
 		int Update(lua_State* L);
 		int Clear(lua_State* L);
 		int Merge(lua_State* L);
+		int Instantiate(lua_State* L);
 
 		int UpdateHierarchy(lua_State* L);
 
 		int Intersects(lua_State* L);
+		int IntersectsFirst(lua_State* L);
 
 		int FindAllEntities(lua_State* L);
 		int Entity_FindByName(lua_State* L);
 		int Entity_Remove(lua_State* L);
+		int Entity_Remove_Async(lua_State* L);
 		int Entity_Duplicate(lua_State* L);
 		int Entity_IsDescendant(lua_State* L);
 
 		int Component_CreateName(lua_State* L);
 		int Component_CreateLayer(lua_State* L);
 		int Component_CreateTransform(lua_State* L);
+		int Component_CreateCamera(lua_State* L);
 		int Component_CreateEmitter(lua_State* L);
 		int Component_CreateHairParticleSystem(lua_State* L);
 		int Component_CreateLight(lua_State* L);
@@ -67,6 +73,7 @@ namespace wi::lua::scene
 		int Component_CreateDecal(lua_State* L);
 		int Component_CreateSprite(lua_State* L);
 		int Component_CreateFont(lua_State* L);
+		int Component_CreateVoxelGrid(lua_State* L);
 
 		int Component_GetName(lua_State* L);
 		int Component_GetLayer(lua_State* L);
@@ -93,6 +100,7 @@ namespace wi::lua::scene
 		int Component_GetDecal(lua_State* L);
 		int Component_GetSprite(lua_State* L);
 		int Component_GetFont(lua_State* L);
+		int Component_GetVoxelGrid(lua_State* L);
 
 		int Component_GetNameArray(lua_State* L);
 		int Component_GetLayerArray(lua_State* L);
@@ -119,6 +127,7 @@ namespace wi::lua::scene
 		int Component_GetDecalArray(lua_State* L);
 		int Component_GetSpriteArray(lua_State* L);
 		int Component_GetFontArray(lua_State* L);
+		int Component_GetVoxelGridArray(lua_State* L);
 
 		int Entity_GetNameArray(lua_State* L);
 		int Entity_GetLayerArray(lua_State* L);
@@ -146,6 +155,7 @@ namespace wi::lua::scene
 		int Entity_GetDecalArray(lua_State* L);
 		int Entity_GetSpriteArray(lua_State* L);
 		int Entity_GetFontArray(lua_State* L);
+		int Entity_GetVoxelGridArray(lua_State* L);
 
 		int Component_RemoveName(lua_State* L);
 		int Component_RemoveLayer(lua_State* L);
@@ -173,6 +183,7 @@ namespace wi::lua::scene
 		int Component_RemoveDecal(lua_State* L);
 		int Component_RemoveSprite(lua_State* L);
 		int Component_RemoveFont(lua_State* L);
+		int Component_RemoveVoxelGrid(lua_State* L);
 
 		int Component_Attach(lua_State* L);
 		int Component_Detach(lua_State* L);
@@ -184,6 +195,11 @@ namespace wi::lua::scene
 		int SetWeather(lua_State* L);
 
 		int RetargetAnimation(lua_State* L);
+		int ResetPose(lua_State* L);
+		int GetOceanPosAt(lua_State* L);
+
+		int VoxelizeObject(lua_State* L);
+		int VoxelizeScene(lua_State* L);
 	};
 
 	class NameComponent_BindLua
@@ -270,6 +286,9 @@ namespace wi::lua::scene
 		int GetPosition(lua_State* L);
 		int GetRotation(lua_State* L);
 		int GetScale(lua_State* L);
+		int GetForward(lua_State* L);
+		int GetUp(lua_State* L);
+		int GetRight(lua_State* L);
 		int IsDirty(lua_State* L);
 		int SetDirty(lua_State* L);
 		int SetScale(lua_State* L);
@@ -349,6 +368,17 @@ namespace wi::lua::scene
 		int SetStart(lua_State* L);
 		int GetEnd(lua_State* L);
 		int SetEnd(lua_State* L);
+		int SetPingPong(lua_State* L);
+		int IsPingPong(lua_State* L);
+		int SetPlayOnce(lua_State* L);
+		int IsPlayingOnce(lua_State* L);
+
+		// For Rootmotion
+		int IsRootMotion(lua_State* L);
+		int RootMotionOn(lua_State* L);
+		int RootMotionOff(lua_State* L);
+		int GetRootTranslation(lua_State* L);
+		int GetRootRotation(lua_State* L);
 	};
 
 	class MaterialComponent_BindLua
@@ -366,7 +396,7 @@ namespace wi::lua::scene
 		{
 			_flags = LongLongProperty(reinterpret_cast<long long*>(&component->_flags));
 			ShaderType = IntProperty(reinterpret_cast<int*>(&component->shaderType));
-			UserBlendMode = IntProperty(reinterpret_cast<int*>(&component->roughness));
+			UserBlendMode = IntProperty(reinterpret_cast<int*>(&component->userBlendMode));
 			SpecularColor = VectorProperty(&component->specularColor);
 			SubsurfaceScattering = VectorProperty(&component->subsurfaceScattering);
 			TexMulAdd = VectorProperty(&component->texMulAdd);
@@ -458,6 +488,8 @@ namespace wi::lua::scene
 		int SetUserStencilRef(lua_State* L);
 		int GetUserStencilRef(lua_State* L);
 		int GetStencilRef(lua_State* L);
+		int SetCastShadow(lua_State* L);
+		int IsCastingShadow(lua_State* L);
 
 		int SetTexture(lua_State* L);
 		int SetTextureUVSet(lua_State* L);
@@ -506,6 +538,7 @@ namespace wi::lua::scene
 
 		int SetMeshSubsetMaterialID(lua_State* L);
 		int GetMeshSubsetMaterialID(lua_State* L);
+		int CreateSubset(lua_State* L);
 	};
 
 	class EmitterComponent_BindLua
@@ -616,6 +649,8 @@ namespace wi::lua::scene
 		int GetScaleY(lua_State* L);
 		int GetRotation(lua_State* L);
 		int GetMotionBlurAmount(lua_State* L);
+		int IsCollidersDisabled(lua_State* L);
+		int SetCollidersDisabled(lua_State* L);
 	};
 
 	class HairParticleSystem_BindLua
@@ -744,6 +779,7 @@ namespace wi::lua::scene
 		int GetCascadeMask(lua_State* L);
 		int GetRendertypeMask(lua_State* L);
 		int GetColor(lua_State* L);
+		int GetAlphaRef(lua_State* L);
 		int GetEmissiveColor(lua_State* L);
 		int GetUserStencilRef(lua_State* L);
 		int GetLodDistanceMultiplier(lua_State* L);
@@ -751,11 +787,13 @@ namespace wi::lua::scene
 		int IsForeground(lua_State* L);
 		int IsNotVisibleInMainCamera(lua_State* L);
 		int IsNotVisibleInReflections(lua_State* L);
+		int IsWetmapEnabled(lua_State* L);
 
 		int SetMeshID(lua_State* L);
 		int SetCascadeMask(lua_State* L);
 		int SetRendertypeMask(lua_State* L);
 		int SetColor(lua_State* L);
+		int SetAlphaRef(lua_State* L);
 		int SetEmissiveColor(lua_State* L);
 		int SetUserStencilRef(lua_State* L);
 		int SetLodDistanceMultiplier(lua_State* L);
@@ -763,6 +801,7 @@ namespace wi::lua::scene
 		int SetForeground(lua_State* L);
 		int SetNotVisibleInMainCamera(lua_State* L);
 		int SetNotVisibleInReflections(lua_State* L);
+		int SetWetmapEnabled(lua_State* L);
 	};
 
 	class InverseKinematicsComponent_BindLua
@@ -917,9 +956,11 @@ namespace wi::lua::scene
 
 		int SetDisableDeactivation(lua_State* L);
 		int SetKinematic(lua_State* L);
+		int SetStartDeactivated(lua_State* L);
 
 		int IsDisableDeactivation(lua_State* L);
 		int IsKinematic(lua_State* L);
+		int IsStartDeactivated(lua_State* L);
 	};
 
 	class SoftBodyPhysicsComponent_BindLua
@@ -938,6 +979,7 @@ namespace wi::lua::scene
 			Mass = wi::lua::FloatProperty(&component->mass);
 			Friction = wi::lua::FloatProperty(&component->friction);
 			Restitution = wi::lua::FloatProperty(&component->restitution);
+			VertexRadius = wi::lua::FloatProperty(&component->vertex_radius);
 		}
 
 		SoftBodyPhysicsComponent_BindLua(wi::scene::SoftBodyPhysicsComponent* component) :component(component)
@@ -952,13 +994,19 @@ namespace wi::lua::scene
 		wi::lua::FloatProperty Mass;
 		wi::lua::FloatProperty Friction;
 		wi::lua::FloatProperty Restitution;
+		wi::lua::FloatProperty VertexRadius;
 
 		PropertyFunction(Mass)
 		PropertyFunction(Friction)
 		PropertyFunction(Restitution)
+		PropertyFunction(VertexRadius)
 
+		int SetDetail(lua_State* L);
+		int GetDetail(lua_State* L);
 		int SetDisableDeactivation(lua_State* L);
 		int IsDisableDeactivation(lua_State* L);
+		int SetWindEnabled(lua_State* L);
+		int IsWindEnabled(lua_State* L);
 		int CreateFromMesh(lua_State* L);
 	};
 
@@ -1617,6 +1665,10 @@ namespace wi::lua::scene
 		int Stop(lua_State* L);
 		int SetLooped(lua_State* L);
 		int SetDisable3D(lua_State* L);
+		int SetSound(lua_State* L);
+		int SetSoundInstance(lua_State* L);
+		int GetSound(lua_State* L);
+		int GetSoundInstance(lua_State* L);
 	};
 
 	class ColliderComponent_BindLua
@@ -1713,6 +1765,10 @@ namespace wi::lua::scene
 		int SetLookAt(lua_State* L);
 		int SetRagdollPhysicsEnabled(lua_State* L);
 		int IsRagdollPhysicsEnabled(lua_State* L);
+		int SetRagdollFatness(lua_State* L);
+		int SetRagdollHeadSize(lua_State* L);
+		int GetRagdollFatness(lua_State* L);
+		int GetRagdollHeadSize(lua_State* L);
 	};
 
 	class DecalComponent_BindLua

@@ -46,6 +46,7 @@ namespace wi::backlog
 	bool locked = false;
 	bool blockLuaExec = false;
 	LogLevel logLevel = LogLevel::Default;
+	LogLevel unseen = LogLevel::None;
 
 	std::string getTextWithoutLock()
 	{
@@ -245,7 +246,7 @@ namespace wi::backlog
 		{
 			inputbg.enableLinearOutputMapping(9);
 		}
-		wi::image::Draw(wi::texturehelper::getWhite(), inputbg, cmd);
+		wi::image::Draw(nullptr, inputbg, cmd);
 
 		if (colorspace != ColorSpace::SRGB)
 		{
@@ -321,6 +322,7 @@ namespace wi::backlog
 			}
 			params.cursor = wi::font::Draw(x.text, params, cmd);
 		}
+		unseen = LogLevel::None;
 	}
 
 	std::string getText()
@@ -334,7 +336,7 @@ namespace wi::backlog
 		entries.clear();
 		scroll = 0;
 	}
-	void post(const std::string& input, LogLevel level)
+	void post(const char* input, LogLevel level)
 	{
 		if (logLevel > level)
 		{
@@ -385,6 +387,8 @@ namespace wi::backlog
 				break;
 			}
 
+			unseen = std::max(unseen, level);
+
 			// lock released on block end
 		}
 
@@ -392,6 +396,10 @@ namespace wi::backlog
 		{
 			write_logfile(); // will lock mutex
 		}
+	}
+	void post(const std::string& input, LogLevel level)
+	{
+		post(input.c_str(), level);
 	}
 
 	void historyPrev()
@@ -462,5 +470,10 @@ namespace wi::backlog
 	void SetLogLevel(LogLevel newLevel)
 	{
 		logLevel = newLevel;
+	}
+
+	LogLevel GetUnseenLogLevelMax()
+	{
+		return unseen;
 	}
 }

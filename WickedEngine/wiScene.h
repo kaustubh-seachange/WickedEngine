@@ -13,6 +13,8 @@
 #include "wiTerrain.h"
 #include "wiBVH.h"
 #include "wiUnorderedSet.h"
+#include "wiVoxelGrid.h"
+#include "wiPathQuery.h"
 
 #include <string>
 #include <memory>
@@ -30,23 +32,23 @@ namespace wi::scene
 		wi::ecs::ComponentManager<LayerComponent>& layers = componentLibrary.Register<LayerComponent>("wi::scene::Scene::layers");
 		wi::ecs::ComponentManager<TransformComponent>& transforms = componentLibrary.Register<TransformComponent>("wi::scene::Scene::transforms");
 		wi::ecs::ComponentManager<HierarchyComponent>& hierarchy = componentLibrary.Register<HierarchyComponent>("wi::scene::Scene::hierarchy");
-		wi::ecs::ComponentManager<MaterialComponent>& materials = componentLibrary.Register<MaterialComponent>("wi::scene::Scene::materials", 2); // version = 2
-		wi::ecs::ComponentManager<MeshComponent>& meshes = componentLibrary.Register<MeshComponent>("wi::scene::Scene::meshes", 2); // version = 2
+		wi::ecs::ComponentManager<MaterialComponent>& materials = componentLibrary.Register<MaterialComponent>("wi::scene::Scene::materials", 5); // version = 5
+		wi::ecs::ComponentManager<MeshComponent>& meshes = componentLibrary.Register<MeshComponent>("wi::scene::Scene::meshes", 3); // version = 3
 		wi::ecs::ComponentManager<ImpostorComponent>& impostors = componentLibrary.Register<ImpostorComponent>("wi::scene::Scene::impostors");
-		wi::ecs::ComponentManager<ObjectComponent>& objects = componentLibrary.Register<ObjectComponent>("wi::scene::Scene::objects", 2); // version = 2
-		wi::ecs::ComponentManager<RigidBodyPhysicsComponent>& rigidbodies = componentLibrary.Register<RigidBodyPhysicsComponent>("wi::scene::Scene::rigidbodies", 1); // version = 1
-		wi::ecs::ComponentManager<SoftBodyPhysicsComponent>& softbodies = componentLibrary.Register<SoftBodyPhysicsComponent>("wi::scene::Scene::softbodies");
+		wi::ecs::ComponentManager<ObjectComponent>& objects = componentLibrary.Register<ObjectComponent>("wi::scene::Scene::objects", 3); // version = 3
+		wi::ecs::ComponentManager<RigidBodyPhysicsComponent>& rigidbodies = componentLibrary.Register<RigidBodyPhysicsComponent>("wi::scene::Scene::rigidbodies", 3); // version = 3
+		wi::ecs::ComponentManager<SoftBodyPhysicsComponent>& softbodies = componentLibrary.Register<SoftBodyPhysicsComponent>("wi::scene::Scene::softbodies", 3); // version = 3
 		wi::ecs::ComponentManager<ArmatureComponent>& armatures = componentLibrary.Register<ArmatureComponent>("wi::scene::Scene::armatures");
 		wi::ecs::ComponentManager<LightComponent>& lights = componentLibrary.Register<LightComponent>("wi::scene::Scene::lights", 2); // version = 2
 		wi::ecs::ComponentManager<CameraComponent>& cameras = componentLibrary.Register<CameraComponent>("wi::scene::Scene::cameras");
 		wi::ecs::ComponentManager<EnvironmentProbeComponent>& probes = componentLibrary.Register<EnvironmentProbeComponent>("wi::scene::Scene::probes", 1); // version = 1
 		wi::ecs::ComponentManager<ForceFieldComponent>& forces = componentLibrary.Register<ForceFieldComponent>("wi::scene::Scene::forces", 1); // version = 1
 		wi::ecs::ComponentManager<DecalComponent>& decals = componentLibrary.Register<DecalComponent>("wi::scene::Scene::decals", 1); // version = 1
-		wi::ecs::ComponentManager<AnimationComponent>& animations = componentLibrary.Register<AnimationComponent>("wi::scene::Scene::animations", 1); // version = 1
+		wi::ecs::ComponentManager<AnimationComponent>& animations = componentLibrary.Register<AnimationComponent>("wi::scene::Scene::animations", 2); // version = 2
 		wi::ecs::ComponentManager<AnimationDataComponent>& animation_datas = componentLibrary.Register<AnimationDataComponent>("wi::scene::Scene::animation_datas");
 		wi::ecs::ComponentManager<EmittedParticleSystem>& emitters = componentLibrary.Register<EmittedParticleSystem>("wi::scene::Scene::emitters");
 		wi::ecs::ComponentManager<HairParticleSystem>& hairs = componentLibrary.Register<HairParticleSystem>("wi::scene::Scene::hairs");
-		wi::ecs::ComponentManager<WeatherComponent>& weathers = componentLibrary.Register<WeatherComponent>("wi::scene::Scene::weathers", 5); // version = 5
+		wi::ecs::ComponentManager<WeatherComponent>& weathers = componentLibrary.Register<WeatherComponent>("wi::scene::Scene::weathers", 6); // version = 6
 		wi::ecs::ComponentManager<SoundComponent>& sounds = componentLibrary.Register<SoundComponent>("wi::scene::Scene::sounds", 1); // version = 1
 		wi::ecs::ComponentManager<VideoComponent>& videos = componentLibrary.Register<VideoComponent>("wi::scene::Scene::videos");
 		wi::ecs::ComponentManager<InverseKinematicsComponent>& inverse_kinematics = componentLibrary.Register<InverseKinematicsComponent>("wi::scene::Scene::inverse_kinematics");
@@ -54,10 +56,11 @@ namespace wi::scene
 		wi::ecs::ComponentManager<ColliderComponent>& colliders = componentLibrary.Register<ColliderComponent>("wi::scene::Scene::colliders", 2); // version = 2
 		wi::ecs::ComponentManager<ScriptComponent>& scripts = componentLibrary.Register<ScriptComponent>("wi::scene::Scene::scripts");
 		wi::ecs::ComponentManager<ExpressionComponent>& expressions = componentLibrary.Register<ExpressionComponent>("wi::scene::Scene::expressions");
-		wi::ecs::ComponentManager<HumanoidComponent>& humanoids = componentLibrary.Register<HumanoidComponent>("wi::scene::Scene::humanoids");
-		wi::ecs::ComponentManager<wi::terrain::Terrain>& terrains = componentLibrary.Register<wi::terrain::Terrain>("wi::scene::Scene::terrains", 3); // version = 3
+		wi::ecs::ComponentManager<HumanoidComponent>& humanoids = componentLibrary.Register<HumanoidComponent>("wi::scene::Scene::humanoids", 1); // version = 1
+		wi::ecs::ComponentManager<wi::terrain::Terrain>& terrains = componentLibrary.Register<wi::terrain::Terrain>("wi::scene::Scene::terrains", 5); // version = 5
 		wi::ecs::ComponentManager<wi::Sprite>& sprites = componentLibrary.Register<wi::Sprite>("wi::scene::Scene::sprites");
 		wi::ecs::ComponentManager<wi::SpriteFont>& fonts = componentLibrary.Register<wi::SpriteFont>("wi::scene::Scene::fonts");
+		wi::ecs::ComponentManager<wi::VoxelGrid>& voxel_grids = componentLibrary.Register<wi::VoxelGrid>("wi::scene::Scene::voxel_grids");
 
 		// Non-serialized attributes:
 		float dt = 0;
@@ -123,6 +126,9 @@ namespace wi::scene
 		ShaderMaterial* materialArrayMapped = nullptr;
 		size_t materialArraySize = 0;
 		wi::graphics::GPUBuffer materialBuffer;
+		wi::graphics::GPUBuffer textureStreamingFeedbackBuffer;
+		wi::graphics::GPUBuffer textureStreamingFeedbackBuffer_readback[wi::graphics::GraphicsDevice::GetBufferCount()];
+		const uint32_t* textureStreamingFeedbackMapped = nullptr;
 
 		// Meshlets:
 		wi::graphics::GPUBuffer meshletBuffer;
@@ -159,16 +165,24 @@ namespace wi::scene
 		mutable std::atomic<uint32_t> queryAllocator{ 0 };
 
 		// Surfel GI resources:
-		wi::graphics::GPUBuffer surfelBuffer;
-		wi::graphics::GPUBuffer surfelDataBuffer;
-		wi::graphics::GPUBuffer surfelAliveBuffer[2];
-		wi::graphics::GPUBuffer surfelDeadBuffer;
-		wi::graphics::GPUBuffer surfelStatsBuffer;
-		wi::graphics::GPUBuffer surfelIndirectBuffer;
-		wi::graphics::GPUBuffer surfelGridBuffer;
-		wi::graphics::GPUBuffer surfelCellBuffer;
-		wi::graphics::GPUBuffer surfelRayBuffer;
-		wi::graphics::Texture surfelMomentsTexture[2];
+		struct SurfelGI
+		{
+			mutable bool cleared = false;
+			wi::graphics::GPUBuffer surfelBuffer;
+			wi::graphics::GPUBuffer dataBuffer;
+			wi::graphics::GPUBuffer varianceBuffer;
+			wi::graphics::GPUBuffer aliveBuffer[2];
+			wi::graphics::GPUBuffer deadBuffer;
+			wi::graphics::GPUBuffer statsBuffer;
+			wi::graphics::GPUBuffer indirectBuffer;
+			wi::graphics::GPUBuffer gridBuffer;
+			wi::graphics::GPUBuffer cellBuffer;
+			wi::graphics::GPUBuffer rayBuffer;
+			wi::graphics::Texture momentsTexture;
+			wi::graphics::Texture irradianceTexture;
+			wi::graphics::Texture irradianceTexture_rw;
+			wi::graphics::GPUBuffer sparse_tile_pool;
+		} surfelgi;
 
 		// DDGI resources:
 		struct DDGI
@@ -177,13 +191,16 @@ namespace wi::scene
 			uint3 grid_dimensions = uint3(32, 8, 32); // The scene extents will be subdivided into a grid of this resolution, each grid cell will have one probe
 			float3 grid_min = float3(-1, -1, -1);
 			float3 grid_max = float3(1, 1, 1);
-			float smooth_backface = 0; // smoothness of backface test
+			float smooth_backface = 0.01f; // smoothness of backface test
 			wi::graphics::GPUBuffer ray_buffer;
-			wi::graphics::GPUBuffer offset_buffer;
+			wi::graphics::GPUBuffer variance_buffer;
+			wi::graphics::GPUBuffer raycount_buffer;
+			wi::graphics::GPUBuffer rayallocation_buffer;
 			wi::graphics::GPUBuffer sparse_tile_pool;
-			wi::graphics::Texture color_texture[2];
-			wi::graphics::Texture color_texture_rw[2]; // alias of color_texture
-			wi::graphics::Texture depth_texture[2];
+			wi::graphics::Texture color_texture;
+			wi::graphics::Texture color_texture_rw; // alias of color_texture
+			wi::graphics::Texture depth_texture;
+			wi::graphics::Texture offset_texture;
 
 			void Serialize(wi::Archive& archive);
 		} ddgi;
@@ -268,6 +285,8 @@ namespace wi::scene
 		void PutWaterRipple(const XMFLOAT3& pos);
 		void PutWaterRipple(const std::string& image, const XMFLOAT3& pos);
 
+		wi::graphics::GPUBuffer voxelgrid_gpu; // primary CPU voxelgrid uploaded to GPU
+
 		// Animation processing optimizer:
 		struct AnimationQueue
 		{
@@ -280,6 +299,14 @@ namespace wi::scene
 		wi::jobsystem::context animation_dependency_scan_workload;
 		void ScanAnimationDependencies();
 
+		wi::vector<SpringComponent*> spring_queues; // these indicate which chains can be updated on separate threads
+		wi::jobsystem::context spring_dependency_scan_workload;
+		void ScanSpringDependencies();
+		void UpdateSpringsTopDownRecursive(SpringComponent* parent_spring, SpringComponent& spring);
+
+		float wetmap_fadeout_time = 0;
+		bool IsWetmapProcessingRequired() const;
+
 		// Update all components by a given timestep (in seconds):
 		//	This is an expensive function, prefer to call it only once per frame!
 		virtual void Update(float dt);
@@ -288,6 +315,11 @@ namespace wi::scene
 		// Merge an other scene into this.
 		//	The contents of the other scene will be lost (and moved to this)!
 		virtual void Merge(Scene& other);
+		// Create a copy of prefab and merge it into this.
+		//	prefab		: source scene to be copied from
+		//	attached	: if true, everything from prefab will be attached to a root entity
+		//	returns new root entity if attached is set to true, otherwise returns INVALID_ENTITY
+		virtual wi::ecs::Entity Instantiate(Scene& prefab, bool attached = false);
 		// Finds all entities in the scene that have any components attached
 		void FindAllEntities(wi::unordered_set<wi::ecs::Entity>& entities) const;
 
@@ -401,6 +433,7 @@ namespace wi::scene
 		// Detaches all children from an entity (if there are any):
 		void Component_DetachChildren(wi::ecs::Entity parent);
 
+		// Read/write whole scene into an archive
 		void Serialize(wi::Archive& archive);
 
 		void RunAnimationUpdateSystem(wi::jobsystem::context& ctx);
@@ -432,6 +465,7 @@ namespace wi::scene
 			wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY;
 			XMFLOAT3 position = XMFLOAT3(0, 0, 0);
 			XMFLOAT3 normal = XMFLOAT3(0, 0, 0);
+			XMFLOAT4 uv = XMFLOAT4(0, 0, 0, 0);
 			XMFLOAT3 velocity = XMFLOAT3(0, 0, 0);
 			float distance = std::numeric_limits<float>::max();
 			int subsetIndex = -1;
@@ -446,11 +480,20 @@ namespace wi::scene
 				return entity == other.entity;
 			}
 		};
-		// Given a ray, finds the closest intersection point against all mesh instances
+		// Given a ray, finds the closest intersection point against all mesh instances or collliders
 		//	ray				:	the incoming ray that will be traced
-		//	renderTypeMask	:	filter based on render type
+		//	filterMask		:	filter based on type
 		//	layerMask		:	filter based on layer
+		//	lod				:	specify min level of detail for meshes
 		RayIntersectionResult Intersects(const wi::primitive::Ray& ray, uint32_t filterMask = wi::enums::FILTER_OPAQUE, uint32_t layerMask = ~0, uint32_t lod = 0) const;
+
+		// Given a ray, finds the first intersection point against all mesh instances or colliders
+		//	returns true immediately if intersection was found, false otherwise
+		//	ray				:	the incoming ray that will be traced
+		//	filterMask		:	filter based on type
+		//	layerMask		:	filter based on layer
+		//	lod				:	specify min level of detail for meshes
+		bool IntersectsFirst(const wi::primitive::Ray& ray, uint32_t filterMask = wi::enums::FILTER_OPAQUE, uint32_t layerMask = ~0, uint32_t lod = 0) const;
 
 		struct SphereIntersectionResult
 		{
@@ -482,13 +525,44 @@ namespace wi::scene
 		wi::ecs::Entity RetargetAnimation(wi::ecs::Entity dst, wi::ecs::Entity src, bool bake_data, const Scene* src_scene = nullptr);
 
 		// If you don't know which armature the bone is contained int, this function can be used to find the first such armature and return the bone's rest matrix
-		//	If not found, return identity matrix
-		XMMATRIX FindBoneRestPose(wi::ecs::Entity bone) const;
+		//	If not found, and entity has a transform, it returns transform matrix
+		//	Otherwise, returns identity matrix
+		XMMATRIX GetRestPose(wi::ecs::Entity entity) const;
+		XMMATRIX FindBoneRestPose(wi::ecs::Entity bone) { return GetRestPose(bone); }; // back-compat of GetRestPose
+
+		// Returns 1 if humanoid's default facing direction is forward, -1 if it's backward
+		float GetHumanoidDefaultFacing(const HumanoidComponent& humanoid, wi::ecs::Entity humanoidEntity) const;
+
+		// All triangles of the object will be injected into the voxel grid
+		//	subtract: if false (default), voxels will be added, if true then voxels will be removed
+		void VoxelizeObject(size_t objectIndex, wi::VoxelGrid& grid, bool subtract = false, uint32_t lod = 0);
+
+		// Voxelize all meshes that match the filters into a voxel grid
+		void VoxelizeScene(wi::VoxelGrid& voxelgrid, bool subtract = false, uint32_t filterMask = wi::enums::FILTER_ALL, uint32_t layerMask = ~0, uint32_t lod = 0);
+
+		// Get the current position on the surface of an object, tracked by the triangle barycentrics
+		XMFLOAT3 GetPositionOnSurface(wi::ecs::Entity objectEntity, int vertexID0, int vertexID1, int vertexID2, const XMFLOAT2& bary) const;
+
+		// Resets pose of the specified entity to bind pose
+		//	this will search for all armatures that are descendants of the entity and set all bone matrices to the their bind matrix
+		void ResetPose(wi::ecs::Entity entity);
+
+		// Returns the approximate position on the ocean surface seen from a position in world space.
+		//	If current weather doesn't have ocean enabled, returns the world position itself.
+		//	The result position is approximate because it involves reading back from GPU to the CPU, so the result can be delayed compared to the current GPU simulation.
+		//	Note that the input position to this function will be taken on the XZ plane and modified by the displacement map's XZ value, and the Y (vertical) position will be taken from the ocean water height and displacement map only.
+		XMFLOAT3 GetOceanPosAt(const XMFLOAT3& worldPosition) const;
 	};
 
+	// Returns skinned vertex position
+	//	N : normal (out, optional)
+	XMVECTOR SkinVertex(const MeshComponent& mesh, const wi::vector<ShaderTransform>& boneData, uint32_t index, XMVECTOR* N = nullptr);
 	// Returns skinned vertex position in armature local space
 	//	N : normal (out, optional)
 	XMVECTOR SkinVertex(const MeshComponent& mesh, const ArmatureComponent& armature, uint32_t index, XMVECTOR* N = nullptr);
+	// Returns skinned vertex position of soft body in world space
+	//	N : normal (out, optional)
+	XMVECTOR SkinVertex(const MeshComponent& mesh, const SoftBodyPhysicsComponent& softbody, uint32_t index, XMVECTOR* N = nullptr);
 
 
 	// Helper that manages a global scene
@@ -523,6 +597,19 @@ namespace wi::scene
 	//
 	//	returns INVALID_ENTITY if attached argument was false, else it returns the base entity handle
 	wi::ecs::Entity LoadModel(Scene& scene, const std::string& fileName, const XMMATRIX& transformMatrix = XMMatrixIdentity(), bool attached = false);
+
+	// Helper function to open a wiscene file and add the contents to the global scene
+	//	fileName		:	file path
+	//	transformMatrix	:	everything will be transformed by this matrix (optional)
+	//	rootEntity		:	specify entity to attach whole scene to (optional)
+	void LoadModel2(const std::string& fileName, const XMMATRIX& transformMatrix = XMMatrixIdentity(), wi::ecs::Entity rootEntity = wi::ecs::INVALID_ENTITY);
+
+	// Helper function to open a wiscene file and add the contents to the specified scene. This is thread safe as it doesn't modify global scene
+	//	scene			:	the scene that will contain the model
+	//	fileName		:	file path
+	//	transformMatrix	:	everything will be transformed by this matrix (optional)
+	//	rootEntity		:	specify entity to attach whole scene to (optional)
+	void LoadModel2(Scene& scene, const std::string& fileName, const XMMATRIX& transformMatrix = XMMatrixIdentity(), wi::ecs::Entity rootEntity = wi::ecs::INVALID_ENTITY);
 
 	// Deprecated, use Scene::Intersects() function instead
 	using PickResult = Scene::RayIntersectionResult;

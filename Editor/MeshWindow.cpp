@@ -2,11 +2,25 @@
 #include "MeshWindow.h"
 
 #include "Utility/stb_image.h"
-
-#include "meshoptimizer/meshoptimizer.h"
+#include "Utility/meshoptimizer/meshoptimizer.h"
 
 using namespace wi::ecs;
 using namespace wi::scene;
+
+MeshComponent* get_mesh(Scene& scene, PickResult x)
+{
+	MeshComponent* mesh = scene.meshes.GetComponent(x.entity);
+	if (mesh == nullptr)
+	{
+		// Mesh could be selected indirectly as part of selected object:
+		ObjectComponent* object = scene.objects.GetComponent(x.entity);
+		if (object != nullptr && object->meshID != INVALID_ENTITY)
+		{
+			mesh = scene.meshes.GetComponent(object->meshID);
+		}
+	}
+	return mesh;
+};
 
 void MeshWindow::Create(EditorComponent* _editor)
 {
@@ -25,8 +39,8 @@ void MeshWindow::Create(EditorComponent* _editor)
 
 		editor->RecordEntity(archive, entity);
 
-		editor->optionsWnd.RefreshEntityTree();
-		});
+		editor->componentsWnd.RefreshEntityTree();
+	});
 
 	float x = 95;
 	float y = 0;
@@ -123,9 +137,12 @@ void MeshWindow::Create(EditorComponent* _editor)
 	doubleSidedCheckBox.SetSize(XMFLOAT2(hei, hei));
 	doubleSidedCheckBox.SetPos(XMFLOAT2(x, y += step));
 	doubleSidedCheckBox.OnClick([&](wi::gui::EventArgs args) {
-		MeshComponent* mesh = editor->GetCurrentScene().meshes.GetComponent(entity);
-		if (mesh != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			MeshComponent* mesh = get_mesh(scene, x);
+			if (mesh == nullptr)
+				continue;
 			mesh->SetDoubleSided(args.bValue);
 		}
 	});
@@ -136,12 +153,15 @@ void MeshWindow::Create(EditorComponent* _editor)
 	doubleSidedShadowCheckBox.SetSize(XMFLOAT2(hei, hei));
 	doubleSidedShadowCheckBox.SetPos(XMFLOAT2(x, y += step));
 	doubleSidedShadowCheckBox.OnClick([&](wi::gui::EventArgs args) {
-		MeshComponent* mesh = editor->GetCurrentScene().meshes.GetComponent(entity);
-		if (mesh != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			MeshComponent* mesh = get_mesh(scene, x);
+			if (mesh == nullptr)
+				continue;
 			mesh->SetDoubleSidedShadow(args.bValue);
 		}
-		});
+	});
 	AddWidget(&doubleSidedShadowCheckBox);
 
 	bvhCheckBox.Create("Enable BVH: ");
@@ -149,9 +169,12 @@ void MeshWindow::Create(EditorComponent* _editor)
 	bvhCheckBox.SetSize(XMFLOAT2(hei, hei));
 	bvhCheckBox.SetPos(XMFLOAT2(x, y += step));
 	bvhCheckBox.OnClick([&](wi::gui::EventArgs args) {
-		MeshComponent* mesh = editor->GetCurrentScene().meshes.GetComponent(entity);
-		if (mesh != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			MeshComponent* mesh = get_mesh(scene, x);
+			if (mesh == nullptr)
+				continue;
 			mesh->SetBVHEnabled(args.bValue);
 		}
 	});
@@ -162,9 +185,12 @@ void MeshWindow::Create(EditorComponent* _editor)
 	quantizeCheckBox.SetSize(XMFLOAT2(hei, hei));
 	quantizeCheckBox.SetPos(XMFLOAT2(x, y += step));
 	quantizeCheckBox.OnClick([&](wi::gui::EventArgs args) {
-		MeshComponent* mesh = editor->GetCurrentScene().meshes.GetComponent(entity);
-		if (mesh != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			MeshComponent* mesh = get_mesh(scene, x);
+			if (mesh == nullptr)
+				continue;
 			mesh->SetQuantizedPositionsDisabled(args.bValue);
 			mesh->CreateRenderData();
 			if (!mesh->BLASes.empty())
@@ -172,7 +198,7 @@ void MeshWindow::Create(EditorComponent* _editor)
 				mesh->CreateRaytracingRenderData();
 			}
 		}
-		});
+	});
 	AddWidget(&quantizeCheckBox);
 
 	impostorCreateButton.Create("Create Impostor");
@@ -213,9 +239,12 @@ void MeshWindow::Create(EditorComponent* _editor)
 	tessellationFactorSlider.SetSize(XMFLOAT2(wid, hei));
 	tessellationFactorSlider.SetPos(XMFLOAT2(x, y += step));
 	tessellationFactorSlider.OnSlide([&](wi::gui::EventArgs args) {
-		MeshComponent* mesh = editor->GetCurrentScene().meshes.GetComponent(entity);
-		if (mesh != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			MeshComponent* mesh = get_mesh(scene, x);
+			if (mesh == nullptr)
+				continue;
 			mesh->tessellationFactor = args.fValue;
 		}
 	});
@@ -229,12 +258,15 @@ void MeshWindow::Create(EditorComponent* _editor)
 	flipCullingButton.SetSize(XMFLOAT2(mod_wid, hei));
 	flipCullingButton.SetPos(XMFLOAT2(mod_x, y += step));
 	flipCullingButton.OnClick([&](wi::gui::EventArgs args) {
-		MeshComponent* mesh = editor->GetCurrentScene().meshes.GetComponent(entity);
-		if (mesh != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			MeshComponent* mesh = get_mesh(scene, x);
+			if (mesh == nullptr)
+				continue;
 			mesh->FlipCulling();
-			SetEntity(entity, subset);
 		}
+		SetEntity(entity, subset);
 	});
 	AddWidget(&flipCullingButton);
 
@@ -243,12 +275,15 @@ void MeshWindow::Create(EditorComponent* _editor)
 	flipNormalsButton.SetSize(XMFLOAT2(mod_wid, hei));
 	flipNormalsButton.SetPos(XMFLOAT2(mod_x, y += step));
 	flipNormalsButton.OnClick([&](wi::gui::EventArgs args) {
-		MeshComponent* mesh = editor->GetCurrentScene().meshes.GetComponent(entity);
-		if (mesh != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			MeshComponent* mesh = get_mesh(scene, x);
+			if (mesh == nullptr)
+				continue;
 			mesh->FlipNormals();
-			SetEntity(entity, subset);
 		}
+		SetEntity(entity, subset);
 	});
 	AddWidget(&flipNormalsButton);
 
@@ -257,12 +292,15 @@ void MeshWindow::Create(EditorComponent* _editor)
 	computeNormalsSmoothButton.SetSize(XMFLOAT2(mod_wid, hei));
 	computeNormalsSmoothButton.SetPos(XMFLOAT2(mod_x, y += step));
 	computeNormalsSmoothButton.OnClick([&](wi::gui::EventArgs args) {
-		MeshComponent* mesh = editor->GetCurrentScene().meshes.GetComponent(entity);
-		if (mesh != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			MeshComponent* mesh = get_mesh(scene, x);
+			if (mesh == nullptr)
+				continue;
 			mesh->ComputeNormals(MeshComponent::COMPUTE_NORMALS_SMOOTH);
-			SetEntity(entity, subset);
 		}
+		SetEntity(entity, subset);
 	});
 	AddWidget(&computeNormalsSmoothButton);
 
@@ -271,12 +309,15 @@ void MeshWindow::Create(EditorComponent* _editor)
 	computeNormalsHardButton.SetSize(XMFLOAT2(mod_wid, hei));
 	computeNormalsHardButton.SetPos(XMFLOAT2(mod_x, y += step));
 	computeNormalsHardButton.OnClick([&](wi::gui::EventArgs args) {
-		MeshComponent* mesh = editor->GetCurrentScene().meshes.GetComponent(entity);
-		if (mesh != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			MeshComponent* mesh = get_mesh(scene, x);
+			if (mesh == nullptr)
+				continue;
 			mesh->ComputeNormals(MeshComponent::COMPUTE_NORMALS_HARD);
-			SetEntity(entity, subset);
 		}
+		SetEntity(entity, subset);
 	});
 	AddWidget(&computeNormalsHardButton);
 
@@ -285,11 +326,13 @@ void MeshWindow::Create(EditorComponent* _editor)
 	recenterButton.SetSize(XMFLOAT2(mod_wid, hei));
 	recenterButton.SetPos(XMFLOAT2(mod_x, y += step));
 	recenterButton.OnClick([&](wi::gui::EventArgs args) {
-		MeshComponent* mesh = editor->GetCurrentScene().meshes.GetComponent(entity);
-		if (mesh != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			MeshComponent* mesh = get_mesh(scene, x);
+			if (mesh == nullptr)
+				continue;
 			mesh->Recenter();
-			SetEntity(entity, subset);
 		}
 	});
 	AddWidget(&recenterButton);
@@ -299,23 +342,25 @@ void MeshWindow::Create(EditorComponent* _editor)
 	recenterToBottomButton.SetSize(XMFLOAT2(mod_wid, hei));
 	recenterToBottomButton.SetPos(XMFLOAT2(mod_x, y += step));
 	recenterToBottomButton.OnClick([&](wi::gui::EventArgs args) {
-		MeshComponent* mesh = editor->GetCurrentScene().meshes.GetComponent(entity);
-		if (mesh != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			MeshComponent* mesh = get_mesh(scene, x);
+			if (mesh == nullptr)
+				continue;
 			mesh->RecenterToBottom();
-			SetEntity(entity, subset);
 		}
 	});
 	AddWidget(&recenterToBottomButton);
 
 	mergeButton.Create("Merge Selected");
-	mergeButton.SetTooltip("Merges selected objects/meshes into one.\nAll selected object transformations will be applied to meshes and allmeshes will be baked into a single mesh.");
+	mergeButton.SetTooltip("Merges selected objects/meshes into one.\nAll selected object transformations will be applied to meshes and all meshes will be baked into a single mesh.");
 	mergeButton.SetSize(XMFLOAT2(mod_wid, hei));
 	mergeButton.SetPos(XMFLOAT2(mod_x, y += step));
 	mergeButton.OnClick([=](wi::gui::EventArgs args) {
 		Scene& scene = editor->GetCurrentScene();
-		MeshComponent merged_mesh;
 		ObjectComponent merged_object;
+		MeshComponent merged_mesh;
 		bool valid_normals = false;
 		bool valid_uvset_0 = false;
 		bool valid_uvset_1 = false;
@@ -326,6 +371,36 @@ void MeshWindow::Create(EditorComponent* _editor)
 		bool valid_windweights = false;
 		wi::unordered_set<Entity> entities_to_remove;
 		Entity prev_subset_material = INVALID_ENTITY;
+
+		// Search for first object with a mesh from selection, that will be the base:
+		Entity baseEntityParent = INVALID_ENTITY;
+		Entity baseEntity = INVALID_ENTITY;
+		TransformComponent* baseTransform = nullptr;
+		ObjectComponent* baseObject = nullptr;
+		MeshComponent* baseMesh = nullptr;
+		for (auto& picked : editor->translator.selected)
+		{
+			ObjectComponent* object = scene.objects.GetComponent(picked.entity);
+			if (object == nullptr)
+				continue;
+			MeshComponent* mesh = scene.meshes.GetComponent(object->meshID);
+			if (mesh == nullptr)
+				continue;
+			baseEntity = picked.entity;
+			HierarchyComponent* hier = scene.hierarchy.GetComponent(baseEntity);
+			if (hier != nullptr)
+			{
+				baseEntityParent = hier->parentID;
+			}
+			baseTransform = scene.transforms.GetComponent(picked.entity);
+			baseObject = object;
+			baseMesh = mesh;
+		}
+		if (baseObject == nullptr)
+			return;
+		merged_object.meshID = baseObject->meshID;
+
+		// Merge all other meshes into the base object:
 		for (auto& picked : editor->translator.selected)
 		{
 			ObjectComponent* object = scene.objects.GetComponent(picked.entity);
@@ -454,21 +529,28 @@ void MeshWindow::Create(EditorComponent* _editor)
 			{
 				merged_mesh.armatureID = mesh->armatureID;
 			}
-			entities_to_remove.insert(picked.entity);
 
-			// Only remove mesh if it is no longer used by any other objects:
-			bool mesh_still_used = false;
-			for (size_t i = 0; i < scene.objects.GetCount(); ++i)
+			if (object != baseObject) // don't remove base object
 			{
-				if (entities_to_remove.count(scene.objects.GetEntity(i)) == 0 && scene.objects[i].meshID == object->meshID)
-				{
-					mesh_still_used = true;
-					break;
-				}
+				entities_to_remove.insert(picked.entity);
 			}
-			if (!mesh_still_used)
+
+			if (mesh != baseMesh)
 			{
-				entities_to_remove.insert(object->meshID);
+				// Only remove mesh if it is no longer used by any other objects:
+				bool mesh_still_used = false;
+				for (size_t i = 0; i < scene.objects.GetCount(); ++i)
+				{
+					if (entities_to_remove.count(scene.objects.GetEntity(i)) == 0 && scene.objects[i].meshID == object->meshID)
+					{
+						mesh_still_used = true;
+						break;
+					}
+				}
+				if (!mesh_still_used)
+				{
+					entities_to_remove.insert(object->meshID);
+				}
 			}
 		}
 
@@ -491,14 +573,15 @@ void MeshWindow::Create(EditorComponent* _editor)
 			if (!valid_windweights)
 				merged_mesh.vertex_windweights.clear();
 
-			Entity merged_object_entity = scene.Entity_CreateObject("mergedObject");
-			Entity merged_mesh_entity = scene.Entity_CreateMesh("mergedMesh");
-			ObjectComponent* object = scene.objects.GetComponent(merged_object_entity);
-			*object = std::move(merged_object);
-			object->meshID = merged_mesh_entity;
-			MeshComponent* mesh = scene.meshes.GetComponent(merged_mesh_entity);
-			*mesh = std::move(merged_mesh);
-			mesh->CreateRenderData();
+			*baseObject = std::move(merged_object);
+			*baseMesh = std::move(merged_mesh);
+			baseMesh->CreateRenderData();
+			scene.Component_Detach(baseEntity);
+			if (baseTransform != nullptr)
+			{
+				baseTransform->ClearTransform();
+			}
+			scene.Component_Attach(baseEntity, baseEntityParent);
 		}
 
 		for (auto& x : entities_to_remove)
@@ -514,9 +597,12 @@ void MeshWindow::Create(EditorComponent* _editor)
 	optimizeButton.SetSize(XMFLOAT2(mod_wid, hei));
 	optimizeButton.SetPos(XMFLOAT2(mod_x, y += step));
 	optimizeButton.OnClick([&](wi::gui::EventArgs args) {
-		MeshComponent* mesh = editor->GetCurrentScene().meshes.GetComponent(entity);
-		if (mesh != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			MeshComponent* mesh = get_mesh(scene, x);
+			if (mesh == nullptr)
+				continue;
 			// https://github.com/zeux/meshoptimizer#vertex-cache-optimization
 
 			size_t index_count = mesh->indices.size();
@@ -528,9 +614,9 @@ void MeshWindow::Create(EditorComponent* _editor)
 			mesh->indices = indices;
 
 			mesh->CreateRenderData();
-			SetEntity(entity, subset);
 		}
-		});
+		SetEntity(entity, subset);
+	});
 	AddWidget(&optimizeButton);
 
 	exportHeaderButton.Create("Export to C++ header");
@@ -596,7 +682,7 @@ void MeshWindow::Create(EditorComponent* _editor)
 				}
 
 				// Generate shadow indices for position-only stream:
-				wi::vector<uint32_t> shadow_indices(indices.size() * 2); // *2 fixes some weird memory oob write issue with a specific model
+				wi::vector<uint32_t> shadow_indices(indices.size());
 				meshopt_generateShadowIndexBuffer(
 					shadow_indices.data(), indices.data(), indices.size(),
 					vertices.data(), vertices.size(), sizeof(XMFLOAT3), sizeof(XMFLOAT3)
@@ -649,7 +735,6 @@ void MeshWindow::Create(EditorComponent* _editor)
 	AddWidget(&exportHeaderButton);
 
 
-
 	subsetMaterialComboBox.Create("Material: ");
 	subsetMaterialComboBox.SetSize(XMFLOAT2(wid, hei));
 	subsetMaterialComboBox.SetPos(XMFLOAT2(x, y += step));
@@ -670,7 +755,7 @@ void MeshWindow::Create(EditorComponent* _editor)
 				meshsubset.materialID = scene.materials.GetEntity(args.iValue - 1);
 			}
 		}
-		});
+	});
 	subsetMaterialComboBox.SetTooltip("Set the base material of the selected MeshSubset");
 	AddWidget(&subsetMaterialComboBox);
 
@@ -693,10 +778,16 @@ void MeshWindow::Create(EditorComponent* _editor)
 	morphTargetSlider.SetSize(XMFLOAT2(wid, hei));
 	morphTargetSlider.SetPos(XMFLOAT2(x, y += step));
 	morphTargetSlider.OnSlide([&](wi::gui::EventArgs args) {
-		MeshComponent* mesh = editor->GetCurrentScene().meshes.GetComponent(entity);
-		if (mesh != nullptr && morphTargetCombo.GetSelected() < (int)mesh->morph_targets.size())
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
-			mesh->morph_targets[morphTargetCombo.GetSelected()].weight = args.fValue;
+			MeshComponent* mesh = get_mesh(scene, x);
+			if (mesh == nullptr)
+				continue;
+			if (morphTargetCombo.GetSelected() < (int)mesh->morph_targets.size())
+			{
+				mesh->morph_targets[morphTargetCombo.GetSelected()].weight = args.fValue;
+			}
 		}
 	});
 	AddWidget(&morphTargetSlider);
@@ -706,9 +797,12 @@ void MeshWindow::Create(EditorComponent* _editor)
 	lodgenButton.SetSize(XMFLOAT2(wid, hei));
 	lodgenButton.SetPos(XMFLOAT2(x, y += step));
 	lodgenButton.OnClick([&](wi::gui::EventArgs args) {
-		MeshComponent* mesh = editor->GetCurrentScene().meshes.GetComponent(entity);
-		if (mesh != nullptr)
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
 		{
+			MeshComponent* mesh = get_mesh(scene, x);
+			if (mesh == nullptr)
+				continue;
 			if (mesh->subsets_per_lod == 0)
 			{
 				// if there were no lods before, record the subset count without lods:
@@ -750,7 +844,7 @@ void MeshWindow::Create(EditorComponent* _editor)
 			{
 				const MeshComponent::MeshSubset& subset = mesh->subsets[subsetIndex];
 
-				float threshold = wi::math::Lerp(0, 0.9f, wi::math::saturate(lodQualitySlider.GetValue()));
+				float threshold = wi::math::Lerp(0, 0.9f, saturate(lodQualitySlider.GetValue()));
 				for (size_t i = 1; i < lod_count; ++i)
 				{
 					wi::vector<unsigned int>& lod = lods[i].subsets[subsetIndex].indices;
@@ -808,9 +902,9 @@ void MeshWindow::Create(EditorComponent* _editor)
 			mesh->subsets = subsets;
 
 			mesh->CreateRenderData();
-			SetEntity(entity, subset);
 		}
-		});
+		SetEntity(entity, subset);
+	});
 	AddWidget(&lodgenButton);
 
 	lodCountSlider.Create(2, 10, 6, 8, "LOD Count: ");

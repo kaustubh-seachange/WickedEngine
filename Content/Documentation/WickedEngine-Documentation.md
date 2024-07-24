@@ -133,6 +133,8 @@ This is a reference for the C++ features of Wicked Engine
 	12. [wiSpinLock](#wispinlock)
 	13. [wiArguments](#wiarguments)
 	14. [wiTimer](#witimer)
+	14. [wiVoxelGrid](#wivoxelgrid)
+	14. [wiPathQuery](#wipathquery)
 6. [Input](#input)
 7. [Audio](#audio)
 	1. [Sound](#sound)
@@ -291,93 +293,93 @@ A bitmask of 0 will make the entity inactive in most systems.
 The lower 8 bits will be used by ray tracing as an instance inclusion mask for instances (ObjectComponent, EmittedParticle, HairParticle..)
 
 #### TransformComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 Orientation in 3D space, which supports various common operations on itself.
 
 #### PreviousFrameTransformComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 Absolute orientation in the previous frame (a matrix).
 
 #### HierarchyComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 An entity can be part of a transform hierarchy by having this component. Some other properties can also be inherieted, such as layer bitmask. If an entity has a parent, then it has a HierarchyComponent, otherwise it's not part of a hierarchy.
 
 #### MaterialComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 Several properties that define a material, like color, textures, etc...
 
 #### MeshComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 A mesh is an array of triangles. A mesh can have multiple parts, called MeshSubsets. Each MeshSubset has a material and it is using a range of triangles of the mesh. This can also have GPU resident data for rendering.
 
 #### ImpostorComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 Supports efficient rendering of the same mesh multiple times (but as an approximation, such as a billboard cutout). A mesh can be rendered as impostors for example when it is not important, but has a large number of copies.
 
 #### ObjectComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 An ObjectComponent is an instance of a mesh that has physical location in a 3D world. Multiple ObjectComponents can have the same mesh, and in this case the mesh will be rendered multiple times efficiently. It is expected that an entity that has ObjectComponent, also has TransformComponent and [AABB](#aabb) (axis aligned bounding box) component.
 
 #### RigidBodyPhysicsComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 Stores properties required for rigid body physics simulation and a handle that will be used by the physicsengine internally.
 
 #### SoftBodyPhysicsComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 Stores properties required for soft body physics simulation and a handle that will be used by the physicsengine internally.
 
 #### ArmatureComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 A skeleton used for skinning deformation of meshes.
 
 #### LightComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 A light in the scene that can shine in the darkness. It is expected that an entity that has LightComponent, also has TransformComponent and [AABB](#aabb) (axis aligned bounding box) component.
 
 #### CameraComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 
 #### EnvironmentProbeComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 It is expected that an entity that has EnvironmentProbeComponent, also has TransformComponent and [AABB](#aabb) (axis aligned bounding box) component.
 
 #### ForceFieldComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 
 #### DecalComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 It is expected that an entity that has DecalComponent, also has TransformComponent and [AABB](#aabb) (axis aligned bounding box) component.
 
 #### AnimationDataComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 
 #### AnimationComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 
 #### WeatherComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 
 #### SoundComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 Holds a Sound and a SoundInstance, and it can be placed into the scene via a TransformComponent. It can have a 3D audio effect it has a TransformComponent.
 
 #### InverseKinematicsComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 If an entity has an `InverseKinematicComponent` (IK), and part of a transform hierarchy (has both [TransformComponent](#transformcomponent) and a [HierarchyComponent](#hierarchycomponent)), then it can be targetted to an other [ThransformComponent](#transformcomponent). The parent transforms will be computed in order to let the IK reach the target if possible. The parent transforms will be only rotated. For example, if a hand tries to reach for an object, the hand and shoulder will move accordingly to let the hand reach.
 The `chain_length` can be specified to let the IK system know how many parents should be computed. It can be greater than the real chain length, in that case there will be no more simulation steps than the length of hierarchy chain.
 The `iteration_count` can be specified to increase accuracy of the computation.
 If animations are also playing on the affected entities, the IK system will override the animations.
 
 #### SpringComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 An entity can have a `SpringComponent` to achieve a "jiggle" or "soft" animation effect programatically. The effect will work automatically if the transform is changed by animation system for example, or in any other way. The parameter `stiffness` specifies how fast the transform tries to go back to its initial position. The parameter `damping` specifies how fast the transform comes to rest position. The `wind_affection` parameter specifies how much the global wind applies to the spring.
 
 #### ColiderComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 The collider component will specify a collider shape to be used in simple fake physics simulations. It will affect Springs and GPU particle effect.
 
 #### ScriptComponent
-[[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
+[[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 ScriptComponent can reference a lua script and run it every frame, while also providing some additional data to script like a local GetEntity() function. The script can be written to reference additional component data by using its unique GetEntity() function. A ScriptComponent can also call other scripts, which can be used to implement multiple scripts on one entity.
 
 #### Scene
@@ -1047,6 +1049,32 @@ This is to store the startup parameters that were passed to the application from
 [[Header]](../../WickedEngine/wiTimer.h) [[Cpp]](../../WickedEngine/wiTimer.cpp)
 High resolution stopwatch timer
 
+### wiVoxelGrid
+[[Header]](../../WickedEngine/wiVoxelGrid.h) [[Cpp]](../../WickedEngine/wiVoxelGrid.cpp)
+An axis aligned bounding box volume that contains a 3D grid of voxels. It can be used to voxelize the scene, and used by [PathQuery](#wipathquery) for path finding.
+
+The voxel grid is created with the `init()` function, providing the dimensions of the 3D grid. This function will allocate the necessary memory to store the grid, and fill every voxel to empty. To simply clear the grid, use `cleardata()` function, which will not allocate memory, only clear all voxels to empty.
+
+The volume of the grid is specified by the `center` and `voxelSize` members. To set the `voxelSize`, use the `set_voxelsize()` function instead of directly modifying the `voxelSize`. You can also align it easily to an existing AABB with the `from_aabb()` function. Setting these doesn't modify voxel data, so it probably needs to be revoxelized after modifications.
+
+The main feature is that you can inject primitives into the voxel grid, this is the voxelization process. You can inject triangles, AABB, Sphere and Capsule primitives with the `inject_triangle()`, `inject_aabb()`, `inject_sphere()` and the `inject_capsule()` functions, respectively. All the primitives are input to these functions in world space, and they will be mapped into the voxel grid internally by these functions based on the grid center, voxelSize and resolution. These functions can also accept a bool option called `subtract` which - if set to `true` - will modify the voxelization process to remove voxels intead of add them. The voxelization process is performance sensitive, but it can be done from different threads as it is thread safe, using atomic operations to modify voxel data.
+
+To access individual voxels, you can use the `check_voxel()` function to check if a voxel is empty or validm and the `set_voxel()` function to set a voxel to empty or valid. These operations are not thread safe! Also these functions will both accept world position, or voxel coordinates. You can additionally convert world positions to voxel coordinates by using the `world_to_coord()` function, or do the reverse with the `coord_to_world()` function.
+
+Note: There are helper functions to voxelize a whole object or the whole scene, accessible from the [Scene](#scene) object. These are called `VoxelizeObject()` and `VoxelizeScene()`.
+
+### wiPathQuery
+[[Header]](../../WickedEngine/wiPathQuery.h) [[Cpp]](../../WickedEngine/wiPathQuery.cpp)
+Path query can find paths from start to goal position within a voxel grid. To run a path finding query, first prepare a [voxel grid](#wivoxelgrid) with scene data, then process it with the path query.
+
+The usage of the path query at minimum is to call the `process()` function, with start and goal positions and a [voxel grid](#wivoxelgrid). When the function returns, you can check path finding success with the `is_successful()` function, and `get_next_waypoint()` function to find the next waypoint in the path from the start that goes towards the goal.
+
+The path query can be additionally configured with the `flying` bool param. If you set `flying` to `true`, then the path finding will search a path in empty voxels (in the air), otherwise by default it will try to find a path that goes on the ground.
+
+The traversing entity can have a logical size, configured by the `agent_height` and `agent_width` parameters, that specify the approcimate size of traversing entity in voxels. `agent_height` will specify how many empty voxels must be above the traversed path at any waypoint. `agent_width` specifies how many empty voxels must be in the horizontal directions. With these you can specify how far the path should keep away from walls and obstacles, and also to not allow going in between tight openings that the logical size would not allow.
+
+Note: processing a path query can take a long time, depending on how far the goal is from the start. Consider doing multiple path queries on multiple threads, or doing them asynchronously across the frame, the [Job System](#job-system) can be used to track completion of asynchronous tasks like this.
+
 
 ## Input
 [[Header]](../../WickedEngine/wiInput.h) [[Cpp]](../../WickedEngine/wiInput.cpp)
@@ -1199,9 +1227,6 @@ The [ObjectComponent](#objectcomponent)'s transform matrix is used as a manipula
 
 The pinned vertices can also be manipulated via <b>skinning animation</b>. If the soft body mesh is skinned and an animation is playing, then the pinned vertices will follow the animation.
 
-<b>Deactivation</b> happens after a while for soft bodies that participated in the simulation for a while, this means after that they will no longer participate in the simulation. This behaviour can be disabled with the `SoftBodyPhysicsComponent::DISABLE_DEACTIVATION` flag.
-
-<b>Resetting</b> a soft body can be accomplished by setting the `SoftBodyPhysicsComponent::FORCE_RESET` flag. This means that the next physics update will reset the soft body mesh to the initial pose.
 
 
 
@@ -1291,18 +1316,25 @@ The interop between shaders and C++ code is handled by shared header (.h) files.
 
 [[Header]](../../WickedEngine/shaders/ShaderInterop.h)
 Shader Interop is used for declaring shared structures or values between C++ Engine code and shader code. There are several ShaderInterop files, postfixed by the subsystem they are used for to keep them minimal and more readable: <br/>
-[ShaderInterop_BVH.h](../WickedEngine/ShaderInterop_BVH.h) <br/>
-[ShaderInterop_EmittedParticle.h](../WickedEngine/ShaderInterop_EmittedParticle.h) <br/>
-[ShaderInterop_FFTGenerator.h](../WickedEngine/ShaderInterop_FFTGenerator.h) <br/>
-[ShaderInterop_Font.h](../WickedEngine/ShaderInterop_Font.h) <br/>
-[ShaderInterop_GPUSortLib.h](../WickedEngine/ShaderInterop_GPUSortLib.h) <br/>
-[ShaderInterop_HairParticle.h](../WickedEngine/ShaderInterop_HairParticle.h) <br/>
-[ShaderInterop_Image.h](../WickedEngine/ShaderInterop_Image.h) <br/>
-[ShaderInterop_Ocean.h](../WickedEngine/ShaderInterop_Ocean.h) <br/>
-[ShaderInterop_Postprocess.h](../WickedEngine/ShaderInterop_Postprocess.h) <br/>
-[ShaderInterop_Raytracing.h](../WickedEngine/ShaderInterop_Raytracing.h) <br/>
-[ShaderInterop_Renderer.h](../WickedEngine/ShaderInterop_Renderer.h) <br/>
-[ShaderInterop_Skinning.h](../WickedEngine/ShaderInterop_Skinning.h) <br/>
+[ShaderInterop_BVH.h](../../WickedEngine/shaders/ShaderInterop_BVH.h) <br/>
+[ShaderInterop_DDGI.h](../../WickedEngine/shaders/ShaderInterop_DDGI.h) <br/>
+[ShaderInterop_EmittedParticle.h](../../WickedEngine/shaders/ShaderInterop_EmittedParticle.h) <br/>
+[ShaderInterop_FFTGenerator.h](../../WickedEngine/shaders/ShaderInterop_FFTGenerator.h) <br/>
+[ShaderInterop_Font.h](../../WickedEngine/shaders/ShaderInterop_Font.h) <br/>
+[ShaderInterop_FSR2.h](../../WickedEngine/shaders/ShaderInterop_FSR2.h) <br/>
+[ShaderInterop_GPUSortLib.h](../../WickedEngine/shaders/ShaderInterop_GPUSortLib.h) <br/>
+[ShaderInterop_HairParticle.h](../../WickedEngine/shaders/ShaderInterop_HairParticle.h) <br/>
+[ShaderInterop_Image.h](../../WickedEngine/shaders/ShaderInterop_Image.h) <br/>
+[ShaderInterop_Ocean.h](../../WickedEngine/shaders/ShaderInterop_Ocean.h) <br/>
+[ShaderInterop_Postprocess.h](../../WickedEngine/shaders/ShaderInterop_Postprocess.h) <br/>
+[ShaderInterop_Raytracing.h](../../WickedEngine/shaders/ShaderInterop_Raytracing.h) <br/>
+[ShaderInterop_Renderer.h](../../WickedEngine/shaders/ShaderInterop_Renderer.h) <br/>
+[ShaderInterop_SurfelGI.h](../../WickedEngine/shaders/ShaderInterop_SurfelGI.h) <br/>
+[ShaderInterop_Terrain.h](../../WickedEngine/shaders/ShaderInterop_Terrain.h) <br/>
+[ShaderInterop_VoxelGrid.h](../../WickedEngine/shaders/ShaderInterop_VoxelGrid.h) <br/>
+[ShaderInterop_VXGI.h](../../WickedEngine/shaders/ShaderInterop_VXGI.h) <br/>
+[ShaderInterop_Weather.h](../../WickedEngine/shaders/ShaderInterop_Weather.h) <br/>
+
 The ShaderInterop also contains the resource macros to help share code between C++ and HLSL, and portability between shader compilers. Read more about macros in the [Shaders section](#shaders)
 
 ### Shader Compiler

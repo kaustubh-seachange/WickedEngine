@@ -7,13 +7,14 @@ using namespace wi::graphics;
 void GraphicsWindow::Create(EditorComponent* _editor)
 {
 	editor = _editor;
-	wi::gui::Window::Create("Graphics", wi::gui::Window::WindowControls::COLLAPSE);
+	wi::gui::Window::Create("Graphics", wi::gui::Window::WindowControls::CLOSE | wi::gui::Window::WindowControls::RESIZE_RIGHT);
+	SetText("Graphics Options " ICON_GRAPHICSOPTIONS);
 
 	wi::renderer::SetToDrawDebugEnvProbes(true);
 	wi::renderer::SetToDrawGridHelper(true);
 	wi::renderer::SetToDrawDebugCameras(true);
 
-	SetSize(XMFLOAT2(580, 1640));
+	SetSize(XMFLOAT2(300, 1680));
 
 	float step = 21;
 	float itemheight = 18;
@@ -61,6 +62,15 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		editor->main->config.Commit();
 		});
 	AddWidget(&resolutionScaleSlider);
+
+	streamingSlider.Create(0.1f, 1.0f, wi::resourcemanager::GetStreamingMemoryThreshold(), 100, "Streaming Threshold: ");
+	streamingSlider.SetTooltip("Adjust the threshold for texture streaming (percent of available video memory).\nIf VRAM is used above the budget, the streaming system will try to reduce textures.\nNote: only DDS textures support streaming.");
+	streamingSlider.SetSize(XMFLOAT2(wid, itemheight));
+	streamingSlider.SetPos(XMFLOAT2(x, y += step));
+	streamingSlider.OnSlide([=](wi::gui::EventArgs args) {
+		wi::resourcemanager::SetStreamingMemoryThreshold(args.fValue);
+	});
+	AddWidget(&streamingSlider);
 
 	renderPathComboBox.Create("Render Path: ");
 	renderPathComboBox.SetSize(XMFLOAT2(wid, itemheight));
@@ -198,7 +208,7 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&ddgiRayCountSlider);
 
-	ddgiBlendSpeedSlider.Create(0, 0.1f, 0.02f, 1000, "DDGI Blend Speed: ");
+	ddgiBlendSpeedSlider.Create(0, 0.2f, 0.1f, 1000, "DDGI Blend Speed: ");
 	ddgiBlendSpeedSlider.SetTooltip("Adjust the contribution of newly traced rays. Higher values will make the DDGI update faster, but can result in increased flickering.");
 	ddgiBlendSpeedSlider.SetSize(XMFLOAT2(wid, itemheight));
 	ddgiBlendSpeedSlider.SetPos(XMFLOAT2(x, y += step));
@@ -304,22 +314,6 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 	});
 	vxgiReflectionsCheckBox.SetCheck(wi::renderer::GetVXGIReflectionsEnabled());
 	AddWidget(&vxgiReflectionsCheckBox);
-
-	vxgiFullresCheckBox.Create("VXGI Full Resolution: ");
-	vxgiFullresCheckBox.SetTooltip("Toggle resolve mode for VXGI opaque. Full resolution will use the full rendering resolution, otherwise it will be upsampled from lower resolution.");
-	vxgiFullresCheckBox.SetPos(XMFLOAT2(x + wid + 1, y));
-	vxgiFullresCheckBox.SetSize(XMFLOAT2(itemheight, itemheight));
-	if (editor->main->config.GetSection("graphics").Has("vxgi.fullres"))
-	{
-		editor->renderPath->setVXGIResolveFullResolutionEnabled(editor->main->config.GetSection("graphics").GetBool("vxgi.fullres"));
-	}
-	vxgiFullresCheckBox.OnClick([=](wi::gui::EventArgs args) {
-		editor->renderPath->setVXGIResolveFullResolutionEnabled(args.bValue);
-		editor->main->config.GetSection("graphics").Set("vxgi.fullres", args.bValue);
-		editor->main->config.Commit();
-	});
-	vxgiFullresCheckBox.SetCheck(editor->renderPath->getVXGIResolveFullResolutionEnabled());
-	AddWidget(&vxgiFullresCheckBox);
 
 	vxgiVoxelSizeSlider.Create(0.125f, 0.5f, 1, 7, "VXGI Voxel Size: ");
 	vxgiVoxelSizeSlider.SetTooltip("Adjust the voxel size for VXGI calculations.");
@@ -645,23 +639,17 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 			break;
 		}
 
+		desc.mip_lod_bias = wi::math::Clamp(mipLodBiasSlider.GetValue(), -15.9f, 15.9f);
+
 		wi::renderer::ModifyObjectSampler(desc);
 
 		editor->main->config.GetSection("graphics").Set("texture_quality", args.iValue);
 		editor->main->config.Commit();
 	});
-	if (editor->main->config.GetSection("graphics").Has("texture_quality"))
-	{
-		textureQualityComboBox.SetSelected(editor->main->config.GetSection("graphics").GetInt("texture_quality"));
-	}
-	else
-	{
-		textureQualityComboBox.SetSelected(3);
-	}
 	textureQualityComboBox.SetTooltip("Choose a texture sampling method for material textures.");
 	AddWidget(&textureQualityComboBox);
 
-	mipLodBiasSlider.Create(-2, 2, 0, 100000, "MipLOD Bias: ");
+	mipLodBiasSlider.Create(-16, 16, 0, 100000, "MipLOD Bias: ");
 	mipLodBiasSlider.SetTooltip("Bias the rendered mip map level of the material textures.");
 	mipLodBiasSlider.SetSize(XMFLOAT2(wid, itemheight));
 	mipLodBiasSlider.SetPos(XMFLOAT2(x, y += step));
@@ -972,6 +960,38 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&raytracedDiffuseRangeSlider);
 	raytracedDiffuseRangeSlider.SetEnabled(wi::graphics::GetDevice()->CheckCapability(GraphicsDeviceCapability::RAYTRACING));
+
+	ssgiCheckBox.Create("SSGI: ");
+	ssgiCheckBox.SetTooltip("Enable Screen Space Global Illumination, this can add a light bounce effect coming from objects on the screen.");
+	ssgiCheckBox.SetScriptTip("RenderPath3D::SetSSGIEnabled(bool value)");
+	ssgiCheckBox.SetSize(XMFLOAT2(hei, hei));
+	ssgiCheckBox.SetPos(XMFLOAT2(x + 140, y));
+	if (editor->main->config.GetSection("graphics").Has("ssgi"))
+	{
+		editor->renderPath->setSSGIEnabled(editor->main->config.GetSection("graphics").GetBool("ssgi"));
+	}
+	ssgiCheckBox.OnClick([=](wi::gui::EventArgs args) {
+		editor->renderPath->setSSGIEnabled(args.bValue);
+		editor->main->config.GetSection("graphics").Set("ssgi", args.bValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&ssgiCheckBox);
+
+	ssgiDepthRejectionSlider.Create(0.1f, 100.0f, 8, 1000, "SSGI.DepthRejection");
+	ssgiDepthRejectionSlider.SetText("Depth: ");
+	ssgiDepthRejectionSlider.SetTooltip("SSGI depth rejection distance.");
+	ssgiDepthRejectionSlider.SetSize(XMFLOAT2(mod_wid, hei));
+	ssgiDepthRejectionSlider.SetPos(XMFLOAT2(x + 100, y));
+	if (editor->main->config.GetSection("graphics").Has("ssgi_depthrejection"))
+	{
+		editor->renderPath->setSSGIDepthRejection(editor->main->config.GetSection("graphics").GetFloat("ssgi_depthrejection"));
+	}
+	ssgiDepthRejectionSlider.OnSlide([=](wi::gui::EventArgs args) {
+		editor->renderPath->setSSGIDepthRejection(args.fValue);
+		editor->main->config.GetSection("graphics").Set("ssgi_depthrejection", args.fValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&ssgiDepthRejectionSlider);
 
 	screenSpaceShadowsCheckBox.Create("Screen Shadows: ");
 	screenSpaceShadowsCheckBox.SetTooltip("Enable screen space contact shadows. This can add small shadows details to shadow maps in screen space.");
@@ -1381,7 +1401,6 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 
 	fsr2Combo.Create("FSR 2.1 Preset: ");
 	fsr2Combo.SetTooltip("Set resolution scaling quality mode for FSR 2.1:\nQuality: 1.5x\nBalanced: 1.7x\nPerformance: 2.0x\nUltra performance: 3.0x");
-	int fsr2_preset = editor->main->config.GetSection("graphics").GetInt("fsr2_preset");
 	fsr2Combo.SetSize(XMFLOAT2(wid, hei));
 	fsr2Combo.SetPos(XMFLOAT2(x, y += step));
 	fsr2Combo.AddItem("Quality", (uint64_t)wi::RenderPath3D::FSR2_Preset::Quality);
@@ -1398,11 +1417,9 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		editor->main->config.GetSection("graphics").Set("fsr2_preset", args.iValue);
 		editor->main->config.Commit();
 		});
-	fsr2Combo.SetSelected(fsr2_preset);
 	AddWidget(&fsr2Combo);
 
-	Translate(XMFLOAT3(100, 50, 0));
-	SetMinimized(true);
+	SetVisible(false);
 }
 
 void GraphicsWindow::UpdateSwapChainFormats(wi::graphics::SwapChain* swapChain)
@@ -1506,8 +1523,9 @@ void GraphicsWindow::Update()
 	GIBoostSlider.SetValue(wi::renderer::GetGIBoost());
 	visibilityComputeShadingCheckBox.SetCheck(editor->renderPath->visibility_shading_in_compute);
 	resolutionScaleSlider.SetValue(editor->resolutionScale);
+	streamingSlider.SetValue(wi::resourcemanager::GetStreamingMemoryThreshold());
 	MSAAComboBox.SetSelectedByUserdataWithoutCallback(editor->renderPath->getMSAASampleCount());
-	tonemapCombo.SetSelected((int)editor->renderPath->getTonemap());
+	tonemapCombo.SetSelectedByUserdataWithoutCallback((int)editor->renderPath->getTonemap());
 	exposureSlider.SetValue(editor->renderPath->getExposure());
 	brightnessSlider.SetValue(editor->renderPath->getBrightness());
 	contrastSlider.SetValue(editor->renderPath->getContrast());
@@ -1541,9 +1559,11 @@ void GraphicsWindow::Update()
 	raytracedReflectionsCheckBox.SetCheck(editor->renderPath->getRaytracedReflectionEnabled());
 	raytracedReflectionsRangeSlider.SetValue(editor->renderPath->getRaytracedReflectionsRange());
 	raytracedDiffuseCheckBox.SetCheck(editor->renderPath->getRaytracedDiffuseEnabled());
+	ssgiCheckBox.SetCheck(editor->renderPath->getSSGIEnabled());
 	raytracedDiffuseRangeSlider.SetValue(editor->renderPath->getRaytracedDiffuseRange());
 	screenSpaceShadowsCheckBox.SetCheck(wi::renderer::GetScreenSpaceShadowsEnabled());
 	screenSpaceShadowsRangeSlider.SetValue((float)editor->renderPath->getScreenSpaceShadowRange());
+	ssgiDepthRejectionSlider.SetValue((float)editor->renderPath->getSSGIDepthRejection());
 	screenSpaceShadowsStepCountSlider.SetValue((float)editor->renderPath->getScreenSpaceShadowSampleCount());
 	eyeAdaptionCheckBox.SetCheck(editor->renderPath->getEyeAdaptionEnabled());
 	eyeAdaptionKeySlider.SetValue(editor->renderPath->getEyeAdaptionKey());
@@ -1614,7 +1634,7 @@ void GraphicsWindow::ResizeLayout()
 		if (!widget.IsVisible())
 			return;
 		const float margin_left = 155;
-		const float margin_right = 45;
+		const float margin_right = 50;
 		widget.SetPos(XMFLOAT2(margin_left, y));
 		widget.SetSize(XMFLOAT2(width - margin_left - margin_right, widget.GetScale().y));
 		y += widget.GetSize().y;
@@ -1623,7 +1643,7 @@ void GraphicsWindow::ResizeLayout()
 	auto add_right = [&](wi::gui::Widget& widget) {
 		if (!widget.IsVisible())
 			return;
-		const float margin_right = 45;
+		const float margin_right = 50;
 		widget.SetPos(XMFLOAT2(width - margin_right - widget.GetSize().x, y));
 		y += widget.GetSize().y;
 		y += padding;
@@ -1645,6 +1665,7 @@ void GraphicsWindow::ResizeLayout()
 	add(swapchainComboBox);
 	add(renderPathComboBox);
 	add(resolutionScaleSlider);
+	add(streamingSlider);
 	add(speedMultiplierSlider);
 	add(textureQualityComboBox);
 	add(mipLodBiasSlider);
@@ -1724,7 +1745,6 @@ void GraphicsWindow::ResizeLayout()
 		vxgiDebugCombo.SetVisible(false);
 		vxgiCheckBox.SetVisible(false);
 		vxgiReflectionsCheckBox.SetVisible(false);
-		vxgiFullresCheckBox.SetVisible(false);
 		vxgiVoxelSizeSlider.SetVisible(false);
 		vxgiRayStepSizeSlider.SetVisible(false);
 		vxgiMaxDistanceSlider.SetVisible(false);
@@ -1750,7 +1770,6 @@ void GraphicsWindow::ResizeLayout()
 		vxgiDebugCombo.SetVisible(true);
 		vxgiCheckBox.SetVisible(true);
 		vxgiReflectionsCheckBox.SetVisible(true);
-		vxgiFullresCheckBox.SetVisible(true);
 		vxgiVoxelSizeSlider.SetVisible(true);
 		vxgiVoxelSizeSlider.SetValue(editor->GetCurrentScene().vxgi.clipmaps[0].voxelsize);
 		vxgiRayStepSizeSlider.SetVisible(true);
@@ -1781,7 +1800,6 @@ void GraphicsWindow::ResizeLayout()
 		add_right(vxgiDebugCombo);
 		vxgiCheckBox.SetPos(XMFLOAT2(vxgiDebugCombo.GetPos().x - vxgiCheckBox.GetSize().x - padding, vxgiDebugCombo.GetPos().y));
 		add_right(vxgiReflectionsCheckBox);
-		add_right(vxgiFullresCheckBox);
 		add(vxgiVoxelSizeSlider);
 		add(vxgiRayStepSizeSlider);
 		add(vxgiMaxDistanceSlider);
@@ -1806,6 +1824,8 @@ void GraphicsWindow::ResizeLayout()
 	ssrCheckBox.SetPos(XMFLOAT2(reflectionsRoughnessCutoffSlider.GetPos().x - ssrCheckBox.GetSize().x - 80, reflectionsRoughnessCutoffSlider.GetPos().y));
 	add_right(raytracedReflectionsRangeSlider);
 	raytracedReflectionsCheckBox.SetPos(XMFLOAT2(raytracedReflectionsRangeSlider.GetPos().x - raytracedReflectionsCheckBox.GetSize().x - 80, raytracedReflectionsRangeSlider.GetPos().y));
+	add_right(ssgiDepthRejectionSlider);
+	ssgiCheckBox.SetPos(XMFLOAT2(ssgiDepthRejectionSlider.GetPos().x - ssgiCheckBox.GetSize().x - 80, ssgiDepthRejectionSlider.GetPos().y));
 	add_right(raytracedDiffuseRangeSlider);
 	raytracedDiffuseCheckBox.SetPos(XMFLOAT2(raytracedDiffuseRangeSlider.GetPos().x - raytracedDiffuseCheckBox.GetSize().x - 80, raytracedDiffuseRangeSlider.GetPos().y));
 	add_right(screenSpaceShadowsStepCountSlider);
@@ -1837,4 +1857,18 @@ void GraphicsWindow::ResizeLayout()
 	add_right(fsr2Combo);
 
 
+}
+
+void GraphicsWindow::ApplySamplerSettings()
+{
+	if (editor->main->config.GetSection("graphics").Has("texture_quality"))
+	{
+		textureQualityComboBox.SetSelected(editor->main->config.GetSection("graphics").GetInt("texture_quality"));
+	}
+	else
+	{
+		textureQualityComboBox.SetSelected(3);
+	}
+	int fsr2_preset = editor->main->config.GetSection("graphics").GetInt("fsr2_preset");
+	fsr2Combo.SetSelected(fsr2_preset); // modifies sampler bias
 }

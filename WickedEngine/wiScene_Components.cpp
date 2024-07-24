@@ -12,6 +12,9 @@
 #include "wiUnorderedMap.h"
 #include "wiLua.h"
 
+#include "Utility/mikktspace.h"
+#include "Utility/meshoptimizer/meshoptimizer.h"
+
 #if __has_include("OpenImageDenoise/oidn.hpp")
 #include "OpenImageDenoise/oidn.hpp"
 #if OIDN_VERSION_MAJOR >= 2
@@ -71,6 +74,33 @@ namespace wi::scene
 			XMMatrixScalingFromVector(S_local) *
 			XMMatrixRotationQuaternion(R_local) *
 			XMMatrixTranslationFromVector(T_local);
+	}
+	XMFLOAT3 TransformComponent::GetForward() const
+	{
+		return wi::math::GetForward(world);
+	}
+	XMFLOAT3 TransformComponent::GetUp() const
+	{
+		return wi::math::GetUp(world);
+	}
+	XMFLOAT3 TransformComponent::GetRight() const
+	{
+		return wi::math::GetRight(world);
+	}
+	XMVECTOR TransformComponent::GetForwardV() const
+	{
+		XMFLOAT3 v = wi::math::GetForward(world);
+		return XMLoadFloat3(&v);
+	}
+	XMVECTOR TransformComponent::GetUpV() const
+	{
+		XMFLOAT3 v = wi::math::GetUp(world);
+		return XMLoadFloat3(&v);
+	}
+	XMVECTOR TransformComponent::GetRightV() const
+	{
+		XMFLOAT3 v = wi::math::GetRight(world);
+		return XMLoadFloat3(&v);
 	}
 	void TransformComponent::UpdateTransform()
 	{
@@ -237,18 +267,16 @@ namespace wi::scene
 
 	void MaterialComponent::WriteShaderMaterial(ShaderMaterial* dest) const
 	{
+		using namespace wi::math;
+
 		ShaderMaterial material;
-		material.baseColor = baseColor;
-		material.emissive_r11g11b10 = wi::math::Pack_R11G11B10_FLOAT(XMFLOAT3(emissiveColor.x * emissiveColor.w, emissiveColor.y * emissiveColor.w, emissiveColor.z * emissiveColor.w));
-		material.specular_r11g11b10 = wi::math::Pack_R11G11B10_FLOAT(XMFLOAT3(specularColor.x * specularColor.w, specularColor.y * specularColor.w, specularColor.z * specularColor.w));
+		material.init();
+		material.baseColor = pack_half4(baseColor);
+		material.emissive = pack_half3(XMFLOAT3(emissiveColor.x * emissiveColor.w, emissiveColor.y * emissiveColor.w, emissiveColor.z * emissiveColor.w));
+		material.specular = pack_half3(XMFLOAT3(specularColor.x * specularColor.w, specularColor.y * specularColor.w, specularColor.z * specularColor.w));
 		material.texMulAdd = texMulAdd;
-		material.roughness = roughness;
-		material.reflectance = reflectance;
-		material.metalness = metalness;
-		material.refraction = refraction;
-		material.normalMapStrength = (textures[NORMALMAP].resource.IsValid() ? normalMapStrength : 0);
-		material.parallaxOcclusionMapping = parallaxOcclusionMapping;
-		material.displacementMapping = displacementMapping;
+		material.roughness_reflectance_metalness_refraction = pack_half4(roughness, reflectance, metalness, refraction);
+		material.normalmap_pom_alphatest_displacement = pack_half4(normalMapStrength, parallaxOcclusionMapping, 1 - alphaRef, displacementMapping);
 		XMFLOAT4 sss = subsurfaceScattering;
 		sss.x *= sss.w;
 		sss.y *= sss.w;
@@ -259,77 +287,88 @@ namespace wi::scene
 			sss_inv.z = 1.0f / ((1 + sss.z) * (1 + sss.z)),
 			sss_inv.w = 1.0f / ((1 + sss.w) * (1 + sss.w))
 		);
-		material.subsurfaceScattering = sss;
-		material.subsurfaceScattering_inv = sss_inv;
+		material.subsurfaceScattering = pack_half4(sss);
+		material.subsurfaceScattering_inv = pack_half4(sss_inv);
 
-		material.sheenColor_r11g11b10 = wi::math::Pack_R11G11B10_FLOAT(XMFLOAT3(sheenColor.x, sheenColor.y, sheenColor.z));
-		material.sheenRoughness = sheenRoughness;
-		material.clearcoat = clearcoat;
-		material.clearcoatRoughness = clearcoatRoughness;
-		material.alphaTest = 1 - alphaRef;
-		material.layerMask = layerMask;
-		material.transmission = transmission;
-		if (shaderType == SHADERTYPE_PBR_ANISOTROPIC)
+		if (shaderType == SHADERTYPE_WATER)
 		{
-			material.anisotropy_strength = wi::math::Clamp(anisotropy_strength, 0, 0.99f);
-			material.anisotropy_rotation_sin = std::sin(anisotropy_rotation);
-			material.anisotropy_rotation_cos = std::cos(anisotropy_rotation);
+			material.sheenColor = pack_half3(XMFLOAT3(1 - extinctionColor.x, 1 - extinctionColor.y, 1 - extinctionColor.z));
 		}
 		else
 		{
-			material.anisotropy_strength = 0;
-			material.anisotropy_rotation_sin = 0;
-			material.anisotropy_rotation_cos = 0;
+			material.sheenColor = pack_half3(XMFLOAT3(sheenColor.x, sheenColor.y, sheenColor.z));
 		}
-		material.stencilRef = wi::renderer::CombineStencilrefs(engineStencilRef, userStencilRef);
+		material.transmission_sheenroughness_clearcoat_clearcoatroughness = pack_half4(transmission, sheenRoughness, clearcoat, clearcoatRoughness);
+		material.layerMask = layerMask;
+		float _anisotropy_strength = 0;
+		float _anisotropy_rotation_sin = 0;
+		float _anisotropy_rotation_cos = 0;
+		float _blend_with_terrain_height_rcp = 0;
+		if (shaderType == SHADERTYPE_PBR_ANISOTROPIC)
+		{
+			_anisotropy_strength = clamp(anisotropy_strength, 0.0f, 0.99f);
+			_anisotropy_rotation_sin = std::sin(anisotropy_rotation);
+			_anisotropy_rotation_cos = std::cos(anisotropy_rotation);
+		}
+		if (blend_with_terrain_height > 0)
+		{
+			_blend_with_terrain_height_rcp = 1.0f / blend_with_terrain_height;
+		}
+		material.aniso_anisosin_anisocos_terrainblend = pack_half4(_anisotropy_strength, _anisotropy_rotation_sin, _anisotropy_rotation_cos, _blend_with_terrain_height_rcp);
 		material.shaderType = (uint)shaderType;
 		material.userdata = userdata;
 
-		material.options = 0;
+		material.options_stencilref = 0;
 		if (IsUsingVertexColors())
 		{
-			material.options |= SHADERMATERIAL_OPTION_BIT_USE_VERTEXCOLORS;
+			material.options_stencilref |= SHADERMATERIAL_OPTION_BIT_USE_VERTEXCOLORS;
 		}
 		if (IsUsingSpecularGlossinessWorkflow())
 		{
-			material.options |= SHADERMATERIAL_OPTION_BIT_SPECULARGLOSSINESS_WORKFLOW;
+			material.options_stencilref |= SHADERMATERIAL_OPTION_BIT_SPECULARGLOSSINESS_WORKFLOW;
 		}
 		if (IsOcclusionEnabled_Primary())
 		{
-			material.options |= SHADERMATERIAL_OPTION_BIT_OCCLUSION_PRIMARY;
+			material.options_stencilref |= SHADERMATERIAL_OPTION_BIT_OCCLUSION_PRIMARY;
 		}
 		if (IsOcclusionEnabled_Secondary())
 		{
-			material.options |= SHADERMATERIAL_OPTION_BIT_OCCLUSION_SECONDARY;
+			material.options_stencilref |= SHADERMATERIAL_OPTION_BIT_OCCLUSION_SECONDARY;
 		}
 		if (IsUsingWind())
 		{
-			material.options |= SHADERMATERIAL_OPTION_BIT_USE_WIND;
+			material.options_stencilref |= SHADERMATERIAL_OPTION_BIT_USE_WIND;
 		}
 		if (IsReceiveShadow())
 		{
-			material.options |= SHADERMATERIAL_OPTION_BIT_RECEIVE_SHADOW;
+			material.options_stencilref |= SHADERMATERIAL_OPTION_BIT_RECEIVE_SHADOW;
 		}
 		if (IsCastingShadow())
 		{
-			material.options |= SHADERMATERIAL_OPTION_BIT_CAST_SHADOW;
+			material.options_stencilref |= SHADERMATERIAL_OPTION_BIT_CAST_SHADOW;
 		}
 		if (IsDoubleSided())
 		{
-			material.options |= SHADERMATERIAL_OPTION_BIT_DOUBLE_SIDED;
+			material.options_stencilref |= SHADERMATERIAL_OPTION_BIT_DOUBLE_SIDED;
 		}
 		if (GetFilterMask() & FILTER_TRANSPARENT)
 		{
-			material.options |= SHADERMATERIAL_OPTION_BIT_TRANSPARENT;
+			material.options_stencilref |= SHADERMATERIAL_OPTION_BIT_TRANSPARENT;
 		}
 		if (userBlendMode == BLENDMODE_ADDITIVE)
 		{
-			material.options |= SHADERMATERIAL_OPTION_BIT_ADDITIVE;
+			material.options_stencilref |= SHADERMATERIAL_OPTION_BIT_ADDITIVE;
 		}
 		if (shaderType == SHADERTYPE_UNLIT)
 		{
-			material.options |= SHADERMATERIAL_OPTION_BIT_UNLIT;
+			material.options_stencilref |= SHADERMATERIAL_OPTION_BIT_UNLIT;
 		}
+		if (!IsVertexAODisabled())
+		{
+			material.options_stencilref |= SHADERMATERIAL_OPTION_BIT_USE_VERTEXAO;
+		}
+
+		material.options_stencilref |= wi::renderer::CombineStencilrefs(engineStencilRef, userStencilRef) << 24u;
 
 		GraphicsDevice* device = wi::graphics::GetDevice();
 		for (int i = 0; i < TEXTURESLOT_COUNT; ++i)
@@ -411,10 +450,14 @@ namespace wi::scene
 	}
 	wi::resourcemanager::Flags MaterialComponent::GetTextureSlotResourceFlags(TEXTURESLOT slot)
 	{
-		wi::resourcemanager::Flags flags = wi::resourcemanager::Flags::IMPORT_RETAIN_FILEDATA;
+		wi::resourcemanager::Flags flags = wi::resourcemanager::Flags::NONE;
 		if (!IsPreferUncompressedTexturesEnabled())
 		{
 			flags |= wi::resourcemanager::Flags::IMPORT_BLOCK_COMPRESSED;
+		}
+		if (!IsTextureStreamingDisabled())
+		{
+			flags |= wi::resourcemanager::Flags::STREAMING;
 		}
 		switch (slot)
 		{
@@ -455,6 +498,66 @@ namespace wi::scene
 		return wi::renderer::CombineStencilrefs(engineStencilRef, userStencilRef);
 	}
 
+	struct MikkTSpaceUserdata
+	{
+		MeshComponent* mesh = nullptr;
+		const uint32_t* indicesLOD0 = nullptr;
+		int faceCountLOD0 = 0;
+	};
+	int get_num_faces(const SMikkTSpaceContext* context)
+	{
+		const MikkTSpaceUserdata* userdata = static_cast<const MikkTSpaceUserdata*>(context->m_pUserData);
+		return userdata->faceCountLOD0;
+	}
+	int get_num_vertices_of_face(const SMikkTSpaceContext* context, const int iFace)
+	{
+		return 3;
+	}
+	int get_vertex_index(const SMikkTSpaceContext* context, int iFace, int iVert)
+	{
+		const MikkTSpaceUserdata* userdata = static_cast<const MikkTSpaceUserdata*>(context->m_pUserData);
+		int face_size = get_num_vertices_of_face(context, iFace);
+		int indices_index = iFace * face_size + iVert;
+		int index = int(userdata->indicesLOD0[indices_index]);
+		return index;
+	}
+	void get_position(const SMikkTSpaceContext* context, float* outpos, const int iFace, const int iVert)
+	{
+		const MikkTSpaceUserdata* userdata = static_cast<const MikkTSpaceUserdata*>(context->m_pUserData);
+		int index = get_vertex_index(context, iFace, iVert);
+		const XMFLOAT3& vert = userdata->mesh->vertex_positions[index];
+		outpos[0] = vert.x;
+		outpos[1] = vert.y;
+		outpos[2] = vert.z;
+	}
+	void get_normal(const SMikkTSpaceContext* context, float* outnormal, const int iFace, const int iVert)
+	{
+		const MikkTSpaceUserdata* userdata = static_cast<const MikkTSpaceUserdata*>(context->m_pUserData);
+		int index = get_vertex_index(context, iFace, iVert);
+		const XMFLOAT3& vert = userdata->mesh->vertex_normals[index];
+		outnormal[0] = vert.x;
+		outnormal[1] = vert.y;
+		outnormal[2] = vert.z;
+	}
+	void get_tex_coords(const SMikkTSpaceContext* context, float* outuv, const int iFace, const int iVert)
+	{
+		const MikkTSpaceUserdata* userdata = static_cast<const MikkTSpaceUserdata*>(context->m_pUserData);
+		int index = get_vertex_index(context, iFace, iVert);
+		const XMFLOAT2& vert = userdata->mesh->vertex_uvset_0[index];
+		outuv[0] = vert.x;
+		outuv[1] = vert.y;
+	}
+	void set_tspace_basic(const SMikkTSpaceContext* context, const float* tangentu, const float fSign, const int iFace, const int iVert)
+	{
+		const MikkTSpaceUserdata* userdata = static_cast<const MikkTSpaceUserdata*>(context->m_pUserData);
+		auto index = get_vertex_index(context, iFace, iVert);
+		XMFLOAT4& vert = userdata->mesh->vertex_tangents[index];
+		vert.x = tangentu[0];
+		vert.y = tangentu[1];
+		vert.z = tangentu[2];
+		vert.w = fSign;
+	}
+
 	void MeshComponent::DeleteRenderData()
 	{
 		generalBuffer = {};
@@ -489,6 +592,39 @@ namespace wi::scene
 			// Generate tangents if not found:
 			vertex_tangents.resize(vertex_positions.size());
 
+#if 1
+			// MikkTSpace tangent generation:
+			MikkTSpaceUserdata userdata;
+			userdata.mesh = this;
+			uint32_t indexOffsetLOD0 = ~0u;
+			uint32_t indexCountLOD0 = 0;
+			uint32_t first_subset = 0;
+			uint32_t last_subset = 0;
+			GetLODSubsetRange(0, first_subset, last_subset);
+			for (uint32_t subsetIndex = first_subset; subsetIndex < last_subset; ++subsetIndex)
+			{
+				const MeshComponent::MeshSubset& subset = subsets[subsetIndex];
+				indexOffsetLOD0 = std::min(indexOffsetLOD0, subset.indexOffset);
+				indexCountLOD0 = std::max(indexCountLOD0, subset.indexCount);
+			}
+			userdata.indicesLOD0 = indices.data() + indexOffsetLOD0;
+			userdata.faceCountLOD0 = int(indexCountLOD0) / 3;
+
+			SMikkTSpaceInterface iface = {};
+			iface.m_getNumFaces = get_num_faces;
+			iface.m_getNumVerticesOfFace = get_num_vertices_of_face;
+			iface.m_getNormal = get_normal;
+			iface.m_getPosition = get_position;
+			iface.m_getTexCoord = get_tex_coords;
+			iface.m_setTSpaceBasic = set_tspace_basic;
+			SMikkTSpaceContext context = {};
+			context.m_pInterface = &iface;
+			context.m_pUserData = &userdata;
+			tbool mikktspace_result = genTangSpaceDefault(&context);
+			assert(mikktspace_result == 1);
+
+#else
+			// Old tangent generation logic:
 			uint32_t first_subset = 0;
 			uint32_t last_subset = 0;
 			GetLODSubsetRange(0, first_subset, last_subset);
@@ -560,6 +696,7 @@ namespace wi::scene
 					vertex_tangents[i2].w = sign;
 				}
 			}
+#endif
 		}
 
 		const size_t uv_count = std::max(vertex_uvset_0.size(), vertex_uvset_1.size());
@@ -629,20 +766,22 @@ namespace wi::scene
 			{
 				// This is done to avoid 0 scaling on any axis of the UNORM remap matrix of the AABB
 				//	It specifically solves a problem with hardware raytracing which treats AABB with zero axis as invisible
-				if (aabb._max.x - aabb._min.x < std::numeric_limits<float>::epsilon())
+				//	Also there was problem with using float epsilon value, it did not enough precision for raytracing
+				constexpr float min_dim = 0.01f;
+				if (aabb._max.x - aabb._min.x < min_dim)
 				{
-					aabb._max.x += std::numeric_limits<float>::epsilon();
-					aabb._min.x -= std::numeric_limits<float>::epsilon();
+					aabb._max.x += min_dim;
+					aabb._min.x -= min_dim;
 				}
-				if (aabb._max.y - aabb._min.y < std::numeric_limits<float>::epsilon())
+				if (aabb._max.y - aabb._min.y < min_dim)
 				{
-					aabb._max.y += std::numeric_limits<float>::epsilon();
-					aabb._min.y -= std::numeric_limits<float>::epsilon();
+					aabb._max.y += min_dim;
+					aabb._min.y -= min_dim;
 				}
-				if (aabb._max.z - aabb._min.z < std::numeric_limits<float>::epsilon())
+				if (aabb._max.z - aabb._min.z < min_dim)
 				{
-					aabb._max.z += std::numeric_limits<float>::epsilon();
-					aabb._min.z -= std::numeric_limits<float>::epsilon();
+					aabb._max.z += min_dim;
+					aabb._min.z -= min_dim;
 				}
 			}
 		}
@@ -691,7 +830,8 @@ namespace wi::scene
 			AlignTo(uv_count * sizeof(Vertex_UVS), alignment) +
 			AlignTo(vertex_atlas.size() * sizeof(Vertex_TEX), alignment) +
 			AlignTo(vertex_colors.size() * sizeof(Vertex_COL), alignment) +
-			AlignTo(vertex_boneindices.size() * sizeof(Vertex_BON), alignment)
+			AlignTo(vertex_boneindices.size() * sizeof(Vertex_BON), alignment) +
+			AlignTo(vertex_boneindices2.size() * sizeof(Vertex_BON), alignment)
 			;
 
 		constexpr Format morph_format = Format::R16G16B16A16_FLOAT;
@@ -814,10 +954,8 @@ namespace wi::scene
 				buffer_offset += AlignTo(vb_nor.size, alignment);
 				for (size_t i = 0; i < vertex_normals.size(); ++i)
 				{
-					XMFLOAT3 nor = vertex_normals.empty() ? XMFLOAT3(1, 1, 1) : vertex_normals[i];
-					XMStoreFloat3(&nor, XMVector3Normalize(XMLoadFloat3(&nor)));
 					Vertex_NOR vert;
-					vert.FromFULL(nor);
+					vert.FromFULL(vertex_normals[i]);
 					std::memcpy(vertices + i, &vert, sizeof(vert));
 				}
 			}
@@ -886,29 +1024,69 @@ namespace wi::scene
 				}
 			}
 
-			// skinning buffers:
+			// bone reference buffers (skinning, soft body):
 			if (!vertex_boneindices.empty())
 			{
 				vb_bon.offset = buffer_offset;
-				vb_bon.size = vertex_boneindices.size() * sizeof(Vertex_BON);
+				const size_t influence_div4 = GetBoneInfluenceDiv4();
+				vb_bon.size = (vertex_boneindices.size() + vertex_boneindices2.size()) * sizeof(Vertex_BON);
 				Vertex_BON* vertices = (Vertex_BON*)(buffer_data + buffer_offset);
 				buffer_offset += AlignTo(vb_bon.size, alignment);
-				assert(vertex_boneindices.size() == vertex_boneweights.size());
+				assert(vertex_boneindices.size() == vertex_boneweights.size()); // must have same number of indices as weights
+				assert(vertex_boneindices2.empty() || vertex_boneindices2.size() == vertex_boneindices.size()); // if second influence stream exists, it must be as large as the first
+				assert(vertex_boneindices2.size() == vertex_boneweights2.size()); // must have same number of indices as weights
 				for (size_t i = 0; i < vertex_boneindices.size(); ++i)
 				{
-					XMFLOAT4& wei = vertex_boneweights[i];
-					// normalize bone weights
-					float len = wei.x + wei.y + wei.z + wei.w;
-					if (len > 0)
+					// Normalize weights:
+					//	Note: if multiple influence streams are present,
+					//	we have to normalize them together, not separately
+					float weights[8] = {};
+					weights[0] = vertex_boneweights[i].x;
+					weights[1] = vertex_boneweights[i].y;
+					weights[2] = vertex_boneweights[i].z;
+					weights[3] = vertex_boneweights[i].w;
+					if (influence_div4 > 1)
 					{
-						wei.x /= len;
-						wei.y /= len;
-						wei.z /= len;
-						wei.w /= len;
+						weights[4] = vertex_boneweights2[i].x;
+						weights[5] = vertex_boneweights2[i].y;
+						weights[6] = vertex_boneweights2[i].z;
+						weights[7] = vertex_boneweights2[i].w;
 					}
+					float sum = 0;
+					for (auto& weight : weights)
+					{
+						sum += weight;
+					}
+					if (sum > 0)
+					{
+						const float norm = 1.0f / sum;
+						for (auto& weight : weights)
+						{
+							weight *= norm;
+						}
+					}
+					// Store back normalized weights:
+					vertex_boneweights[i].x = weights[0];
+					vertex_boneweights[i].y = weights[1];
+					vertex_boneweights[i].z = weights[2];
+					vertex_boneweights[i].w = weights[3];
+					if (influence_div4 > 1)
+					{
+						vertex_boneweights2[i].x = weights[4];
+						vertex_boneweights2[i].y = weights[5];
+						vertex_boneweights2[i].z = weights[6];
+						vertex_boneweights2[i].w = weights[7];
+					}
+
 					Vertex_BON vert;
-					vert.FromFULL(vertex_boneindices[i], wei);
-					std::memcpy(vertices + i, &vert, sizeof(vert));
+					vert.FromFULL(vertex_boneindices[i], vertex_boneweights[i]);
+					std::memcpy(vertices + (i * influence_div4 + 0), &vert, sizeof(vert));
+
+					if (influence_div4 > 1)
+					{
+						vert.FromFULL(vertex_boneindices2[i], vertex_boneweights2[i]);
+						std::memcpy(vertices + (i * influence_div4 + 1), &vert, sizeof(vert));
+					}
 				}
 			}
 
@@ -1157,7 +1335,6 @@ namespace wi::scene
 		GetLODSubsetRange(0, first_subset, last_subset);
 		for (uint32_t subsetIndex = first_subset; subsetIndex < last_subset; ++subsetIndex)
 		{
-			assert(subsetIndex <= 0xFF); // must fit into 8 bits userdata packing
 			const MeshComponent::MeshSubset& subset = subsets[subsetIndex];
 			if (subset.indexCount == 0)
 				continue;
@@ -1165,7 +1342,6 @@ namespace wi::scene
 			const uint32_t triangleCount = subset.indexCount / 3;
 			for (uint32_t triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex)
 			{
-				assert(triangleIndex <= 0xFFFFFF); // must fit into 24 bits userdata packing
 				const uint32_t i0 = indices[indexOffset + triangleIndex * 3 + 0];
 				const uint32_t i1 = indices[indexOffset + triangleIndex * 3 + 1];
 				const uint32_t i2 = indices[indexOffset + triangleIndex * 3 + 2];
@@ -1173,7 +1349,8 @@ namespace wi::scene
 				const XMFLOAT3& p1 = vertex_positions[i1];
 				const XMFLOAT3& p2 = vertex_positions[i2];
 				AABB aabb = wi::primitive::AABB(wi::math::Min(p0, wi::math::Min(p1, p2)), wi::math::Max(p0, wi::math::Max(p1, p2)));
-				aabb.userdata = (triangleIndex & 0xFFFFFF) | ((subsetIndex & 0xFF) << 24u);
+				aabb.layerMask = triangleIndex;
+				aabb.userdata = subsetIndex;
 				bvh_leaf_aabbs.push_back(aabb);
 			}
 		}
@@ -1321,20 +1498,21 @@ namespace wi::scene
 					XMFLOAT3& v1 = vertex_positions[i1];
 					XMFLOAT3& v2 = vertex_positions[i2];
 
+
 					bool match_pos0 =
-						fabs(v_search_pos.x - v0.x) < FLT_EPSILON &&
-						fabs(v_search_pos.y - v0.y) < FLT_EPSILON &&
-						fabs(v_search_pos.z - v0.z) < FLT_EPSILON;
+						wi::math::float_equal(v_search_pos.x, v0.x) &&
+						wi::math::float_equal(v_search_pos.y, v0.y) &&
+						wi::math::float_equal(v_search_pos.z, v0.z);
 
 					bool match_pos1 =
-						fabs(v_search_pos.x - v1.x) < FLT_EPSILON &&
-						fabs(v_search_pos.y - v1.y) < FLT_EPSILON &&
-						fabs(v_search_pos.z - v1.z) < FLT_EPSILON;
+						wi::math::float_equal(v_search_pos.x, v1.x) &&
+						wi::math::float_equal(v_search_pos.y, v1.y) &&
+						wi::math::float_equal(v_search_pos.z, v1.z);
 
 					bool match_pos2 =
-						fabs(v_search_pos.x - v2.x) < FLT_EPSILON &&
-						fabs(v_search_pos.y - v2.y) < FLT_EPSILON &&
-						fabs(v_search_pos.z - v2.z) < FLT_EPSILON;
+						wi::math::float_equal(v_search_pos.x, v2.x) &&
+						wi::math::float_equal(v_search_pos.y, v2.y) &&
+						wi::math::float_equal(v_search_pos.z, v2.z);
 
 					if (match_pos0 || match_pos1 || match_pos2)
 					{
@@ -1356,8 +1534,12 @@ namespace wi::scene
 			}
 
 			// 3.) Find duplicated vertices by POSITION and UV0 and UV1 and ATLAS and SUBSET and remove them:
-			for (auto& subset : subsets)
+			uint32_t first_subset = 0;
+			uint32_t last_subset = 0;
+			GetLODSubsetRange(0, first_subset, last_subset);
+			for (uint32_t subsetIndex = first_subset; subsetIndex < last_subset; ++subsetIndex)
 			{
+				const MeshComponent::MeshSubset& subset = subsets[subsetIndex];
 				for (uint32_t i = 0; i < subset.indexCount - 1; i++)
 				{
 					uint32_t ind0 = indices[subset.indexOffset + (uint32_t)i];
@@ -1381,21 +1563,21 @@ namespace wi::scene
 						const XMFLOAT2& at1 = vertex_atlas.empty() ? XMFLOAT2(0, 0) : vertex_atlas[ind1];
 
 						const bool duplicated_pos =
-							fabs(p0.x - p1.x) < FLT_EPSILON &&
-							fabs(p0.y - p1.y) < FLT_EPSILON &&
-							fabs(p0.z - p1.z) < FLT_EPSILON;
+							wi::math::float_equal(p0.x, p1.x) &&
+							wi::math::float_equal(p0.y, p1.y) &&
+							wi::math::float_equal(p0.z, p1.z);
 
 						const bool duplicated_uv0 =
-							fabs(u00.x - u01.x) < FLT_EPSILON &&
-							fabs(u00.y - u01.y) < FLT_EPSILON;
+							wi::math::float_equal(u00.x, u01.x) &&
+							wi::math::float_equal(u00.y, u01.y);
 
 						const bool duplicated_uv1 =
-							fabs(u10.x - u11.x) < FLT_EPSILON &&
-							fabs(u10.y - u11.y) < FLT_EPSILON;
+							wi::math::float_equal(u10.x, u11.x) &&
+							wi::math::float_equal(u10.y, u11.y);
 
 						const bool duplicated_atl =
-							fabs(at0.x - at1.x) < FLT_EPSILON &&
-							fabs(at0.y - at1.y) < FLT_EPSILON;
+							wi::math::float_equal(at0.x, at1.x) &&
+							wi::math::float_equal(at0.y, at1.y);
 
 						if (duplicated_pos && duplicated_uv0 && duplicated_uv1 && duplicated_atl)
 						{
@@ -1599,7 +1781,6 @@ namespace wi::scene
 		lightmapTextureData.clear();
 		SetLightmapRenderRequest(false);
 	}
-
 	void ObjectComponent::SaveLightmap()
 	{
 		if (lightmap.IsValid() && has_flag(lightmap.desc.bind_flags, BindFlag::RENDER_TARGET))
@@ -1700,6 +1881,35 @@ namespace wi::scene
 			wi::renderer::BlockCompress(lightmap, bc6tex, cmd);
 			wi::helper::saveTextureToMemory(bc6tex, lightmapTextureData); // internally waits for GPU completion
 			lightmap.desc = desc;
+		}
+	}
+	void ObjectComponent::DeleteRenderData()
+	{
+		vb_ao = {};
+		vb_ao_srv = -1;
+	}
+	void ObjectComponent::CreateRenderData()
+	{
+		DeleteRenderData();
+
+		GraphicsDevice* device = wi::graphics::GetDevice();
+
+		if (!vertex_ao.empty())
+		{
+			GPUBufferDesc desc;
+			desc.bind_flags = BindFlag::SHADER_RESOURCE;
+			desc.size = sizeof(Vertex_AO) * vertex_ao.size();
+			desc.format = Vertex_AO::FORMAT;
+
+			auto fill_ao = [&](void* data) {
+				std::memcpy(data, vertex_ao.data(), vertex_ao.size());
+			};
+
+			bool success = device->CreateBuffer2(&desc, fill_ao, &vb_ao);
+			assert(success);
+			device->SetName(&vb_ao, "ObjectComponent::vb_ao");
+
+			vb_ao_srv = device->GetDescriptorIndex(&vb_ao, SubresourceType::SRV);
 		}
 	}
 
@@ -1808,55 +2018,220 @@ namespace wi::scene
 		return PathDataType::Event;
 	}
 
-	void SoftBodyPhysicsComponent::CreateFromMesh(const MeshComponent& mesh)
+	void SoftBodyPhysicsComponent::CreateFromMesh(MeshComponent& mesh)
 	{
-		vertex_positions_simulation.resize(mesh.vertex_positions.size());
-		vertex_normals_simulation.resize(mesh.vertex_normals.size());
-		vertex_tangents_tmp.resize(mesh.vertex_tangents.size());
-		vertex_tangents_simulation.resize(mesh.vertex_tangents.size());
-
-		XMFLOAT3 _min = XMFLOAT3(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
-		XMFLOAT3 _max = XMFLOAT3(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
-		XMMATRIX W = XMLoadFloat4x4(&worldMatrix);
-		for (size_t i = 0; i < mesh.vertex_positions.size(); ++i)
+		if (weights.size() != mesh.vertex_positions.size())
 		{
-			XMFLOAT3 pos = mesh.vertex_positions[i];
-			XMStoreFloat3(&pos, XMVector3Transform(XMLoadFloat3(&pos), W));
-			vertex_positions_simulation[i].FromFULL(pos);
-			_min = wi::math::Min(_min, pos);
-			_max = wi::math::Max(_max, pos);
+			weights.resize(mesh.vertex_positions.size());
+			std::fill(weights.begin(), weights.end(), 1.0f);
 		}
-		aabb = AABB(_min, _max);
-
-		if (physicsToGraphicsVertexMapping.empty())
+		if (physicsIndices.empty())
 		{
-			// Create a mapping that maps unique vertex positions to all vertex indices that share that. Unique vertex positions will make up the physics mesh:
-			wi::unordered_map<size_t, uint32_t> uniquePositions;
-			graphicsToPhysicsVertexMapping.resize(mesh.vertex_positions.size());
-			physicsToGraphicsVertexMapping.clear();
-			weights.clear();
-
-			for (size_t i = 0; i < mesh.vertex_positions.size(); ++i)
+			bool pinning_required = false;
+			wi::vector<uint32_t> source;
+			uint32_t first_subset = 0;
+			uint32_t last_subset = 0;
+			mesh.GetLODSubsetRange(0, first_subset, last_subset);
+			for (uint32_t subsetIndex = first_subset; subsetIndex < last_subset; ++subsetIndex)
 			{
-				const XMFLOAT3& position = mesh.vertex_positions[i];
-
-				size_t hashes[] = {
-					std::hash<float>{}(position.x),
-					std::hash<float>{}(position.y),
-					std::hash<float>{}(position.z),
-				};
-				size_t vertexHash = (((hashes[0] ^ (hashes[1] << 1) >> 1) ^ (hashes[2] << 1)) >> 1);
-
-				if (uniquePositions.count(vertexHash) == 0)
+				const MeshComponent::MeshSubset& subset = mesh.subsets[subsetIndex];
+				const uint32_t* indices = mesh.indices.data() + subset.indexOffset;
+				for (uint32_t i = 0; i < subset.indexCount; ++i)
 				{
-					uniquePositions[vertexHash] = (uint32_t)physicsToGraphicsVertexMapping.size();
-					physicsToGraphicsVertexMapping.push_back((uint32_t)i);
+					source.push_back(indices[i]);
+					pinning_required |= weights[indices[i]] == 0;
 				}
-				graphicsToPhysicsVertexMapping[i] = uniquePositions[vertexHash];
+			}
+			physicsIndices.resize(source.size());
+
+			if (pinning_required)
+			{
+				// If there is pinning, we need to use precise LOD to retain difference between pinned and soft vertices:
+				wi::vector<XMFLOAT4> vertices(mesh.vertex_positions.size());
+				for (size_t i = 0; i < mesh.vertex_positions.size(); ++i)
+				{
+					vertices[i].x = mesh.vertex_positions[i].x;
+					vertices[i].y = mesh.vertex_positions[i].y;
+					vertices[i].z = mesh.vertex_positions[i].z;
+					vertices[i].w = weights[i] == 0 ? 1.0f : 0.0f;
+				}
+
+				// Generate shadow indices for position+weight-only stream:
+				wi::vector<uint32_t> shadow_indices(source.size());
+				meshopt_generateShadowIndexBuffer(
+					shadow_indices.data(), source.data(), source.size(),
+					vertices.data(), vertices.size(), sizeof(XMFLOAT4), sizeof(XMFLOAT4)
+				);
+
+				size_t result = 0;
+				size_t target_index_count = size_t(shadow_indices.size() * saturate(detail)) / 3 * 3;
+				float target_error = 1 - saturate(detail);
+				int tries = 0;
+				while (result == 0 && tries < 100)
+				{
+					result = meshopt_simplify(
+						&physicsIndices[0],
+						&shadow_indices[0],
+						shadow_indices.size(),
+						(const float*)&mesh.vertex_positions[0],
+						mesh.vertex_positions.size(),
+						sizeof(XMFLOAT3),
+						target_index_count,
+						target_error
+					);
+					target_error *= 0.5f;
+				}
+				assert(result > 0);
+				physicsIndices.resize(result);
+			}
+			else
+			{
+				// Sloppy LOD can be used if no pinning is required:
+				size_t result = 0;
+				size_t target_index_count = 0;
+				float target_error = sqr(1 - saturate(detail));
+				int tries = 0;
+				while (result == 0 && tries < 100)
+				{
+					result = meshopt_simplifySloppy(
+						&physicsIndices[0],
+						&source[0],
+						source.size(),
+						(const float*)&mesh.vertex_positions[0],
+						mesh.vertex_positions.size(),
+						sizeof(XMFLOAT3),
+						target_index_count,
+						target_error
+					);
+					target_error *= 0.5f;
+				}
+				assert(result > 0);
+				physicsIndices.resize(result);
 			}
 
-			weights.resize(physicsToGraphicsVertexMapping.size());
-			std::fill(weights.begin(), weights.end(), 1.0f);
+			physicsIndices.shrink_to_fit();
+
+			// Remap physics indices to point to physics indices:
+			physicsToGraphicsVertexMapping.clear();
+			wi::unordered_map<uint32_t, size_t> physicsVertices;
+			for (size_t i = 0; i < physicsIndices.size(); ++i)
+			{
+				const uint32_t graphicsInd = physicsIndices[i];
+				if (physicsVertices.count(graphicsInd) == 0)
+				{
+					physicsVertices[graphicsInd] = physicsToGraphicsVertexMapping.size();
+					physicsToGraphicsVertexMapping.push_back(graphicsInd);
+				}
+				physicsIndices[i] = (uint32_t)physicsVertices[graphicsInd];
+			}
+			physicsToGraphicsVertexMapping.shrink_to_fit();
+
+			// BoneQueue is used for assigning the highest weighted fixed number of bones (soft body nodes) to a graphics vertex
+			static constexpr int influence = 8;
+			struct BoneQueue
+			{
+				struct Bone
+				{
+					uint32_t index = 0;
+					float weight = 0;
+					constexpr bool operator<(const Bone& other) const { return weight < other.weight; }
+					constexpr bool operator>(const Bone& other) const { return weight > other.weight; }
+				};
+				Bone bones[influence];
+				constexpr void add(uint32_t index, float weight)
+				{
+					int mini = 0;
+					for (int i = 1; i < arraysize(bones); ++i)
+					{
+						if (bones[i].weight < bones[mini].weight)
+						{
+							mini = i;
+						}
+					}
+					if (weight > bones[mini].weight)
+					{
+						bones[mini].weight = weight;
+						bones[mini].index = index;
+					}
+				}
+				void finalize()
+				{
+					std::sort(bones, bones + arraysize(bones), std::greater<Bone>());
+					// Note: normalization of bone weights will be done in MeshComponent::CreateRenderData()
+				}
+				constexpr XMUINT4 get_indices() const
+				{
+					return XMUINT4(
+						influence < 1 ? 0 : bones[0].index,
+						influence < 2 ? 0 : bones[1].index,
+						influence < 3 ? 0 : bones[2].index,
+						influence < 4 ? 0 : bones[3].index
+					);
+				}
+				constexpr XMUINT4 get_indices2() const
+				{
+					return XMUINT4(
+						influence < 5 ? 0 : bones[4].index,
+						influence < 6 ? 0 : bones[5].index,
+						influence < 7 ? 0 : bones[6].index,
+						influence < 8 ? 0 : bones[7].index
+					);
+				}
+				constexpr XMFLOAT4 get_weights() const
+				{
+					return XMFLOAT4(
+						influence < 1 ? 0 : bones[0].weight,
+						influence < 2 ? 0 : bones[1].weight,
+						influence < 3 ? 0 : bones[2].weight,
+						influence < 4 ? 0 : bones[3].weight
+					);
+				}
+				constexpr XMFLOAT4 get_weights2() const
+				{
+					return XMFLOAT4(
+						influence < 5 ? 0 : bones[4].weight,
+						influence < 6 ? 0 : bones[5].weight,
+						influence < 7 ? 0 : bones[6].weight,
+						influence < 8 ? 0 : bones[7].weight
+					);
+				}
+			};
+
+			// Create skinning bone vertex data:
+			mesh.vertex_boneindices.resize(mesh.vertex_positions.size());
+			mesh.vertex_boneweights.resize(mesh.vertex_positions.size());
+			if (influence > 4)
+			{
+				mesh.vertex_boneindices2.resize(mesh.vertex_positions.size());
+				mesh.vertex_boneweights2.resize(mesh.vertex_positions.size());
+			}
+			wi::jobsystem::context ctx;
+			wi::jobsystem::Dispatch(ctx, (uint32_t)mesh.vertex_positions.size(), 64, [&](wi::jobsystem::JobArgs args) {
+				const XMFLOAT3 position = mesh.vertex_positions[args.jobIndex];
+
+				BoneQueue bones;
+				for (size_t physicsInd = 0; physicsInd < physicsToGraphicsVertexMapping.size(); ++physicsInd)
+				{
+					const uint32_t graphicsInd = physicsToGraphicsVertexMapping[physicsInd];
+					const XMFLOAT3 position2 = mesh.vertex_positions[graphicsInd];
+					const float dist = wi::math::DistanceSquared(position, position2);
+					// Note: 0.01 correction is carefully tweaked so that cloth_test and sponza curtains look good
+					// (larger values blow up the curtains, lower values make the shading of the cloth look bad)
+					const float weight = 1.0f / (0.01f + dist);
+					bones.add((uint32_t)physicsInd, weight);
+				}
+
+				bones.finalize();
+				mesh.vertex_boneindices[args.jobIndex] = bones.get_indices();
+				mesh.vertex_boneweights[args.jobIndex] = bones.get_weights();
+				if (influence > 4)
+				{
+					mesh.vertex_boneindices2[args.jobIndex] = bones.get_indices2();
+					mesh.vertex_boneweights2[args.jobIndex] = bones.get_weights2();
+				}
+			});
+			wi::jobsystem::Wait(ctx);
+			mesh.CreateRenderData();
 		}
 	}
 
@@ -1899,8 +2274,6 @@ namespace wi::scene
 		XMStoreFloat4x4(&InvView, _InvV);
 		XMStoreFloat3x3(&rotationMatrix, _InvV);
 		XMStoreFloat4x4(&InvVP, XMMatrixInverse(nullptr, _VP));
-		XMStoreFloat4x4(&Projection, _P);
-		XMStoreFloat4x4(&InvProjection, XMMatrixInverse(nullptr, _P));
 
 		frustum.Create(_VP);
 	}
@@ -1966,7 +2339,7 @@ namespace wi::scene
 	void ScriptComponent::CreateFromFile(const std::string& filename)
 	{
 		this->filename = filename;
-		resource = wi::resourcemanager::Load(filename, wi::resourcemanager::Flags::IMPORT_RETAIN_FILEDATA);
+		resource = wi::resourcemanager::Load(filename);
 		script.clear(); // will be created on first Update()
 	}
 

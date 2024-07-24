@@ -17,6 +17,7 @@ public:
 	wi::gui::CheckBox specularGlossinessCheckBox;
 	wi::gui::CheckBox occlusionPrimaryCheckBox;
 	wi::gui::CheckBox occlusionSecondaryCheckBox;
+	wi::gui::CheckBox vertexAOCheckBox;
 	wi::gui::CheckBox windCheckBox;
 	wi::gui::CheckBox doubleSidedCheckBox;
 	wi::gui::CheckBox outlineCheckBox;
@@ -45,6 +46,7 @@ public:
 	wi::gui::Slider sheenRoughnessSlider;
 	wi::gui::Slider clearcoatSlider;
 	wi::gui::Slider clearcoatRoughnessSlider;
+	wi::gui::Slider blendTerrainSlider;
 
 	wi::gui::ComboBox colorComboBox;
 	wi::gui::ColorPicker colorPicker;

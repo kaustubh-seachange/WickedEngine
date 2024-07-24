@@ -6,6 +6,7 @@
 #include "wiECS.h"
 #include "wiColor.h"
 #include "wiHairParticle.h"
+#include "wiVector.h"
 
 #include <memory>
 
@@ -43,6 +44,14 @@ namespace wi::terrain
 	static constexpr float chunk_half_width = (chunk_width - 1) * 0.5f;
 	static constexpr float chunk_width_rcp = 1.0f / (chunk_width - 1);
 	static constexpr uint32_t vertexCount = chunk_width * chunk_width;
+	enum
+	{
+		MATERIAL_BASE,
+		MATERIAL_SLOPE,
+		MATERIAL_LOW_ALTITUDE,
+		MATERIAL_HIGH_ALTITUDE,
+		MATERIAL_COUNT
+	};
 
 	struct VirtualTextureAtlas
 	{
@@ -51,8 +60,11 @@ namespace wi::terrain
 			wi::graphics::Texture texture;
 			wi::graphics::Texture texture_raw_block;
 		};
-		Map maps[3];
+		Map maps[4];
 		wi::graphics::GPUBuffer tile_pool;
+
+		uint8_t physical_tile_count_x = 0;
+		uint8_t physical_tile_count_y = 0;
 
 		struct Tile
 		{
@@ -62,8 +74,16 @@ namespace wi::terrain
 			{
 				return x != 0xFF && y != 0xFF;
 			}
+			constexpr operator uint16_t() const { return uint16_t(uint16_t(x) | (uint16_t(y) << 8u)); }
 		};
 		wi::vector<Tile> free_tiles;
+
+		struct PhysicalTile
+		{
+			const Tile* last_used = nullptr;
+			uint64_t free_frames = 0;
+		};
+		wi::vector<PhysicalTile> physical_tiles;
 
 		struct Residency
 		{
@@ -77,26 +97,44 @@ namespace wi::terrain
 			bool data_available_CPU[wi::graphics::GraphicsDevice::GetBufferCount() + 1] = {};
 			int cpu_resource_id = 0;
 			uint32_t resolution = 0;
+			bool residency_cleared = false;
 
 			void init(uint32_t resolution);
 			void reset();
 		};
 		wi::unordered_map<uint32_t, wi::vector<std::shared_ptr<Residency>>> free_residencies; // per resolution residencies
 
-		Tile allocate_tile()
+		bool allocate_tile(Tile& tile)
 		{
 			if (free_tiles.empty())
-				return {};
-			Tile tile = free_tiles.back();
+				return false;
+			tile = free_tiles.back();
 			free_tiles.pop_back();
-			return tile;
+			PhysicalTile& physical_tile = physical_tiles[tile.x + tile.y * physical_tile_count_x];
+			physical_tile.last_used = &tile;
+			physical_tile.free_frames = 0;
+			return true;
 		}
-		void free_tile(Tile& tile)
+		bool request_residency(const Tile& tile)
+		{
+			if (check_tile_resident(tile))
+			{
+				physical_tiles[tile.x + tile.y * physical_tile_count_x].free_frames = 0;
+				return true;
+			}
+			return false;
+		}
+		bool check_tile_resident(const Tile& tile) const
 		{
 			if (!tile.IsValid())
-				return;
-			free_tiles.push_back(tile);
-			tile = {};
+				return false;
+			return physical_tiles[tile.x + tile.y * physical_tile_count_x].last_used == &tile;
+		}
+		uint64_t get_tile_frames(const Tile& tile) const
+		{
+			if (!tile.IsValid())
+				return ~0ull;
+			return physical_tiles[tile.x + tile.y * physical_tile_count_x].free_frames;
 		}
 		std::shared_ptr<Residency> allocate_residency(uint32_t resolution)
 		{
@@ -135,13 +173,23 @@ namespace wi::terrain
 
 		void free(VirtualTextureAtlas& atlas)
 		{
-			for (auto& tile : tiles)
-			{
-				atlas.free_tile(tile);
-			}
 			tiles.clear();
 			atlas.free_residency(residency);
 		}
+
+		void invalidate()
+		{
+			resolution = 0;
+		}
+
+		struct AllocationRequest
+		{
+			uint32_t x = 0;
+			uint32_t y = 0;
+			uint32_t lod = 0;
+			uint32_t tile_index = 0;
+		};
+		wi::vector<AllocationRequest> allocation_requests;
 
 		// Attach this data to Virtual Texture because we will record these by separate CPU thread:
 		struct UpdateRequest
@@ -153,7 +201,12 @@ namespace wi::terrain
 			uint8_t tile_y = 0;
 		};
 		mutable wi::vector<UpdateRequest> update_requests;
-		wi::graphics::Texture region_weights_texture;
+		wi::graphics::Texture blendmap;
+	};
+
+	struct BlendmapLayer
+	{
+		wi::vector<uint8_t> pixels;
 	};
 
 	struct ChunkData
@@ -165,12 +218,23 @@ namespace wi::terrain
 		float prop_density_current = 1;
 		wi::HairParticleSystem grass;
 		float grass_density_current = 1;
-		wi::vector<wi::Color> region_weights;
-		wi::graphics::Texture region_weights_texture;
+		wi::vector<BlendmapLayer> blendmap_layers;
+		wi::graphics::Texture blendmap;
 		wi::primitive::Sphere sphere;
 		XMFLOAT3 position = XMFLOAT3(0, 0, 0);
 		bool visible = true;
 		std::shared_ptr<VirtualTexture> vt;
+		wi::vector<uint16_t> heightmap_data;
+		wi::graphics::Texture heightmap;
+
+		void enable_blendmap_layer(size_t materialIndex)
+		{
+			while (blendmap_layers.size() < materialIndex + 1)
+			{
+				blendmap_layers.emplace_back().pixels.resize(vertexCount);
+				std::fill(blendmap_layers.back().pixels.begin(), blendmap_layers.back().pixels.end(), 0);
+			}
+		}
 	};
 
 	struct Prop
@@ -207,14 +271,13 @@ namespace wi::terrain
 		uint32_t _flags = CENTER_TO_CAM | REMOVAL | GRASS;
 
 		wi::ecs::Entity terrainEntity = wi::ecs::INVALID_ENTITY;
+		wi::ecs::Entity chunkGroupEntity = wi::ecs::INVALID_ENTITY;
 		wi::scene::Scene* scene = nullptr;
-		wi::scene::MaterialComponent material_Base;
-		wi::scene::MaterialComponent material_Slope;
-		wi::scene::MaterialComponent material_LowAltitude;
-		wi::scene::MaterialComponent material_HighAltitude;
-		wi::scene::MaterialComponent material_GrassParticle;
+		wi::vector<wi::ecs::Entity> materialEntities = {};
+		wi::ecs::Entity grassEntity = wi::ecs::INVALID_ENTITY;
 		wi::scene::WeatherComponent weather;
 		wi::HairParticleSystem grass_properties;
+		wi::scene::MaterialComponent grass_material;
 		wi::unordered_map<Chunk, ChunkData> chunks;
 		Chunk center_chunk = {};
 		wi::noise::Perlin perlin_noise;
@@ -228,9 +291,12 @@ namespace wi::terrain
 		wi::vector<wi::graphics::GPUBarrier> virtual_texture_barriers_after_update;
 		wi::vector<wi::graphics::GPUBarrier> virtual_texture_barriers_before_allocation;
 		wi::vector<wi::graphics::GPUBarrier> virtual_texture_barriers_after_allocation;
-		wi::vector<const VirtualTexture*> virtual_textures_in_use;
+		wi::vector<VirtualTexture*> virtual_textures_in_use;
 		wi::graphics::Sampler sampler;
 		VirtualTextureAtlas atlas;
+
+		int chunk_buffer_range = 3; // how many chunks to upload to GPU in X and Z directions
+		wi::graphics::GPUBuffer chunk_buffer;
 
 		constexpr bool IsCenterToCamEnabled() const { return _flags & CENTER_TO_CAM; }
 		constexpr bool IsRemovalEnabled() const { return _flags & REMOVAL; }
@@ -282,7 +348,12 @@ namespace wi::terrain
 		void AllocateVirtualTextureTileRequestsGPU(wi::graphics::CommandList cmd) const;
 		void WritebackTileRequestsGPU(wi::graphics::CommandList cmd) const;
 
+		ShaderTerrain GetShaderTerrain() const;
+
 		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
+
+	private:
+		wi::vector<wi::scene::MaterialComponent> materials; // temp storage allocation
 	};
 
 	struct Modifier
@@ -372,7 +443,7 @@ namespace wi::terrain
 				p.y += std::cos(angle) * perturbation;
 			}
 			wi::noise::voronoi::Result res = wi::noise::voronoi::compute(p.x, p.y, (float)seed);
-			float weight = std::pow(1 - wi::math::saturate((res.distance - shape) * fade), std::max(0.0001f, falloff));
+			float weight = std::pow(1 - saturate((res.distance - shape) * fade), std::max(0.0001f, falloff));
 			Blend(height, weight);
 		}
 	};

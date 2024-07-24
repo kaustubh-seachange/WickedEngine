@@ -13,10 +13,11 @@ namespace wi
 	class RenderPath2D :
 		public RenderPath
 	{
-	private:
+	protected:
 		wi::graphics::Texture rtStenciled;
 		wi::graphics::Texture rtStenciled_resolved;
 		wi::graphics::Texture rtFinal;
+		wi::graphics::Texture rtFinal_MSAA;
 
 		wi::gui::GUI GUI;
 
@@ -25,7 +26,11 @@ namespace wi
 
 		float hdr_scaling = 9.0f;
 
+		uint32_t msaaSampleCount = 1;
+
 	public:
+		// Delete GPU resources and initialize them to default
+		virtual void DeleteGPUResources();
 		// create resolution dependent resources, such as render targets
 		virtual void ResizeBuffers();
 		// update DPI dependent elements, such as GUI elements, sprites
@@ -35,6 +40,9 @@ namespace wi
 		void FixedUpdate() override;
 		void Render() const override;
 		void Compose(wi::graphics::CommandList cmd) const override;
+
+		virtual void setMSAASampleCount(uint32_t value) { msaaSampleCount = value; }
+		constexpr uint32_t getMSAASampleCount() const { return msaaSampleCount; }
 
 		const wi::graphics::Texture& GetRenderResult() const { return rtFinal; }
 		virtual const wi::graphics::Texture* GetDepthStencil() const { return nullptr; }

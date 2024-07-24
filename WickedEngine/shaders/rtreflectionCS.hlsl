@@ -94,7 +94,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
 
 		float alphatest = clamp(blue_noise(DTid.xy, q.CandidateTriangleRayT()).r, 0, 0.99);
 
-		if (surface.material.options & SHADERMATERIAL_OPTION_BIT_ADDITIVE)
+		if (surface.material.IsAdditive())
 		{
 			additive_dist.xyz += surface.emissiveColor;
 			additive_dist.w = min(additive_dist.w, q.CandidateTriangleRayT());
@@ -135,10 +135,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
 
 		Surface surface;
 		surface.init();
-		if (!q.CommittedTriangleFrontFace())
-		{
-			surface.flags |= SURFACE_FLAG_BACKFACE;
-		}
+		surface.SetBackface(!q.CommittedTriangleFrontFace());
 		surface.V = -ray.Direction;
 		surface.raycone = raycone;
 		surface.hit_depth = q.CommittedRayT();
@@ -146,7 +143,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
 			return;
 
 		surface.pixel = DTid.xy;
-		surface.screenUV = surface.pixel * postprocess.resolution_rcp.xy;
+		surface.screenUV = (surface.pixel + 0.5) * postprocess.resolution_rcp.xy;
 
 		if (surface.material.IsUnlit())
 		{
@@ -159,8 +156,14 @@ void main(uint2 DTid : SV_DispatchThreadID)
 			surface.V = -q.WorldRayDirection();
 			surface.update();
 
+			if (!surface.IsGIApplied())
+			{
+				float3 ambient = GetAmbient(surface.N);
+				surface.gi = lerp(ambient, ambient * surface.sss.rgb, saturate(surface.sss.a));
+			}
+
 			Lighting lighting;
-			lighting.create(0, 0, GetAmbient(surface.N), 0);
+			lighting.create(0, 0, surface.gi, 0);
 
 			[loop]
 			for (uint iterator = 0; iterator < GetFrame().lightarray_count; iterator++)

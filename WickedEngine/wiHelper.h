@@ -87,16 +87,18 @@ namespace wi::helper
 
 	void DirectoryCreate(const std::string& path);
 
-	bool FileRead(const std::string& fileName, wi::vector<uint8_t>& data);
+	bool FileRead(const std::string& fileName, wi::vector<uint8_t>& data, size_t max_read = ~0ull, size_t offset = 0);
 
 #if WI_VECTOR_TYPE
 	// This version is provided if std::vector != wi::vector
-	bool FileRead(const std::string& fileName, std::vector<uint8_t>& data);
+	bool FileRead(const std::string& fileName, std::vector<uint8_t>& data, size_t max_read = ~0ull, size_t offset = 0);
 #endif // WI_VECTOR_TYPE
 
 	bool FileWrite(const std::string& fileName, const uint8_t* data, size_t size);
 
 	bool FileExists(const std::string& fileName);
+
+	bool DirectoryExists(const std::string& fileName);
 
 	uint64_t FileTimestamp(const std::string& fileName);
 
@@ -117,6 +119,8 @@ namespace wi::helper
 	void FileDialog(const FileDialogParams& params, std::function<void(std::string fileName)> onSuccess);
 
 	void GetFileNamesInDirectory(const std::string& directory, std::function<void(std::string fileName)> onSuccess, const std::string& filter_extension = "");
+
+	void GetFolderNamesInDirectory(const std::string& directory, std::function<void(std::string folderName)> onSuccess);
 
 	// Converts a file into a C++ header file that contains the file contents as byte array.
 	//	dataName : the byte array's name
@@ -170,4 +174,7 @@ namespace wi::helper
 
 	// Returns a good looking memory size string as either bytes, KB, MB or GB
 	std::string GetMemorySizeText(size_t sizeInBytes);
+
+	// Returns a good looking timer duration text as either milliseconds, seconds, minutes or hours
+	std::string GetTimerDurationText(float timerSeconds);
 };

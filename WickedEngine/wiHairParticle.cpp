@@ -21,6 +21,7 @@ namespace wi
 {
 	static Shader vs;
 	static Shader ps_prepass;
+	static Shader ps_prepass_depthonly;
 	static Shader ps;
 	static Shader ps_shadow;
 	static Shader ps_simple;
@@ -28,6 +29,7 @@ namespace wi
 	static DepthStencilState dss_default, dss_equal;
 	static RasterizerState rs, ncrs, wirers, rs_shadow;
 	static BlendState bs;
+	static BlendState bs_shadow;
 	static PipelineState PSO[RENDERPASS_COUNT];
 	static PipelineState PSO_wire;
 
@@ -83,6 +85,8 @@ namespace wi
 				}
 			}
 		}
+
+		_flags |= REBUILD_BUFFERS;
 	}
 
 	void HairParticleSystem::CreateRenderData()
@@ -114,6 +118,7 @@ namespace wi
 			vb_pos[1].size = position_stride * 4 * particleCount;
 			vb_nor.size = sizeof(MeshComponent::Vertex_NOR) * 4 * particleCount;
 			vb_uvs.size = sizeof(MeshComponent::Vertex_UVS) * 4 * particleCount;
+			wetmap.size = sizeof(uint16_t) * 4 * particleCount;
 			ib_culled.size = GetFormatStride(ib_format) * 6 * particleCount;
 			indirect_view.size = sizeof(IndirectDrawArgsIndexedInstanced);
 			vb_pos_raytracing.size = position_stride * 4 * particleCount;
@@ -125,6 +130,7 @@ namespace wi
 				AlignTo(vb_pos[1].size, alignment) +
 				AlignTo(vb_nor.size, alignment) +
 				AlignTo(vb_uvs.size, alignment) +
+				AlignTo(wetmap.size, alignment) +
 				AlignTo(ib_culled.size, alignment) +
 				AlignTo(vb_pos_raytracing.size, alignment)
 			;
@@ -185,6 +191,15 @@ namespace wi
 			vb_uvs.descriptor_srv = device->GetDescriptorIndex(&generalBuffer, SubresourceType::SRV, vb_uvs.subresource_srv);
 			vb_uvs.descriptor_uav = device->GetDescriptorIndex(&generalBuffer, SubresourceType::UAV, vb_uvs.subresource_uav);
 			buffer_offset += vb_uvs.size;
+
+			constexpr Format wetmap_fmt = Format::R16_UNORM;
+			buffer_offset = AlignTo(buffer_offset, alignment);
+			wetmap.offset = buffer_offset;
+			wetmap.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, wetmap.offset, wetmap.size, &wetmap_fmt);
+			wetmap.subresource_uav = device->CreateSubresource(&generalBuffer, SubresourceType::UAV, wetmap.offset, wetmap.size, &wetmap_fmt);
+			wetmap.descriptor_srv = device->GetDescriptorIndex(&generalBuffer, SubresourceType::SRV, wetmap.subresource_srv);
+			wetmap.descriptor_uav = device->GetDescriptorIndex(&generalBuffer, SubresourceType::UAV, wetmap.subresource_uav);
+			buffer_offset += wetmap.size;
 
 			buffer_offset = AlignTo(buffer_offset, alignment);
 			ib_culled.offset = buffer_offset;
@@ -455,6 +470,9 @@ namespace wi
 			return;
 		}
 
+		if (renderPass == RENDERPASS_SHADOW && !material.IsCastingShadow())
+			return;
+
 		GraphicsDevice* device = wi::graphics::GetDevice();
 		device->EventBegin("HairParticle - Draw", cmd);
 
@@ -462,7 +480,7 @@ namespace wi
 
 		if (wi::renderer::IsWireRender())
 		{
-			if (renderPass == RENDERPASS_PREPASS)
+			if (renderPass == RENDERPASS_PREPASS || renderPass == RENDERPASS_PREPASS_DEPTHONLY)
 			{
 				return;
 			}
@@ -472,7 +490,7 @@ namespace wi
 		{
 			device->BindPipelineState(&PSO[renderPass], cmd);
 
-			if (renderPass != RENDERPASS_PREPASS) // depth only alpha test will be full res
+			if (renderPass != RENDERPASS_PREPASS || renderPass == RENDERPASS_PREPASS_DEPTHONLY) // depth only alpha test will be full res
 			{
 				device->BindShadingRate(material.shadingRate, cmd);
 			}
@@ -553,6 +571,7 @@ namespace wi
 
 			wi::renderer::LoadShader(ShaderStage::PS, ps_simple, "hairparticlePS_simple.cso");
 			wi::renderer::LoadShader(ShaderStage::PS, ps_prepass, "hairparticlePS_prepass.cso");
+			wi::renderer::LoadShader(ShaderStage::PS, ps_prepass_depthonly, "hairparticlePS_prepass_depthonly.cso");
 			wi::renderer::LoadShader(ShaderStage::PS, ps_shadow, "hairparticlePS_shadow.cso");
 			wi::renderer::LoadShader(ShaderStage::PS, ps, "hairparticlePS.cso");
 
@@ -562,7 +581,7 @@ namespace wi
 
 			for (int i = 0; i < RENDERPASS_COUNT; ++i)
 			{
-				if (i == RENDERPASS_PREPASS || i == RENDERPASS_MAIN || i == RENDERPASS_SHADOW)
+				if (i == RENDERPASS_PREPASS || i == RENDERPASS_PREPASS_DEPTHONLY || i == RENDERPASS_MAIN || i == RENDERPASS_SHADOW)
 				{
 					PipelineStateDesc desc;
 					desc.vs = &vs;
@@ -576,6 +595,9 @@ namespace wi
 					case RENDERPASS_PREPASS:
 						desc.ps = &ps_prepass;
 						break;
+					case RENDERPASS_PREPASS_DEPTHONLY:
+						desc.ps = &ps_prepass_depthonly;
+						break;
 					case RENDERPASS_MAIN:
 						desc.ps = &ps;
 						desc.dss = &dss_equal;
@@ -583,6 +605,7 @@ namespace wi
 					case RENDERPASS_SHADOW:
 						desc.ps = &ps_shadow;
 						desc.rs = &rs_shadow;
+						desc.bs = &bs_shadow;
 						break;
 					}
 
@@ -675,6 +698,9 @@ namespace wi
 		bld.render_target[0].blend_enable = false;
 		bld.alpha_to_coverage_enable = false;
 		bs = bld;
+
+		bld.render_target[0].render_target_write_mask = ColorWrite::DISABLE;
+		bs_shadow = bld;
 
 		static wi::eventhandler::Handle handle = wi::eventhandler::Subscribe(wi::eventhandler::EVENT_RELOAD_SHADERS, [](uint64_t userdata) { HairParticleSystem_Internal::LoadShaders(); });
 		HairParticleSystem_Internal::LoadShaders();

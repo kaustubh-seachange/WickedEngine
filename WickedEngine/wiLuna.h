@@ -130,6 +130,8 @@ public:
 			lua_pushnumber(L, i | (1 << 8));						// Add a number indexing which func it is
 			lua_settable(L, metatable);								//
 		}
+
+		lua_pop(L, 1);
 	}
 
 	/*
@@ -158,7 +160,7 @@ public:
 	Loads an instance of the class into the Lua stack, and provides you a pointer so you can modify it.
 	*/
 	template<typename... ARG>
-	static void push(lua_State * L, ARG&&... args)
+	static T* push(lua_State * L, ARG&&... args)
 	{
 		T **a = (T **)lua_newuserdata(L, sizeof(T *)); // Create userdata
 		*a = allocator.allocate(std::forward<ARG>(args)...);
@@ -166,6 +168,7 @@ public:
 		luaL_getmetatable(L, T::className);
 
 		lua_setmetatable(L, -2);
+		return *a;
 	}
 
 	// Pushes an instance and registers it into a global object

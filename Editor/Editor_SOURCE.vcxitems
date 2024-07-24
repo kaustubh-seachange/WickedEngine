@@ -20,6 +20,7 @@
     <ClCompile Include="$(MSBuildThisFileDirectory)CameraWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)ColliderWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)ComponentsWindow.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)ContentBrowserWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)DecalWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)Editor.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)EmbeddedResources.cpp" />
@@ -36,72 +37,12 @@
     <ClCompile Include="$(MSBuildThisFileDirectory)LightWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)MaterialPickerWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)MaterialWindow.cpp" />
-    <ClCompile Include="$(MSBuildThisFileDirectory)meshoptimizer\allocator.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="$(MSBuildThisFileDirectory)meshoptimizer\clusterizer.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="$(MSBuildThisFileDirectory)meshoptimizer\indexcodec.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="$(MSBuildThisFileDirectory)meshoptimizer\indexgenerator.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="$(MSBuildThisFileDirectory)meshoptimizer\overdrawanalyzer.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="$(MSBuildThisFileDirectory)meshoptimizer\overdrawoptimizer.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="$(MSBuildThisFileDirectory)meshoptimizer\simplifier.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="$(MSBuildThisFileDirectory)meshoptimizer\spatialorder.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="$(MSBuildThisFileDirectory)meshoptimizer\stripifier.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="$(MSBuildThisFileDirectory)meshoptimizer\vcacheanalyzer.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="$(MSBuildThisFileDirectory)meshoptimizer\vcacheoptimizer.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="$(MSBuildThisFileDirectory)meshoptimizer\vertexcodec.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="$(MSBuildThisFileDirectory)meshoptimizer\vertexfilter.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="$(MSBuildThisFileDirectory)meshoptimizer\vfetchanalyzer.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="$(MSBuildThisFileDirectory)meshoptimizer\vfetchoptimizer.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
     <ClCompile Include="$(MSBuildThisFileDirectory)MeshWindow.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)ModelImporter_FBX.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)ModelImporter_GLTF.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)ModelImporter_OBJ.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)NameWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)ObjectWindow.cpp" />
-    <ClCompile Include="$(MSBuildThisFileDirectory)OptionsWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)PaintToolWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)GraphicsWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)ProfilerWindow.cpp" />
@@ -126,6 +67,7 @@
     <ClCompile Include="$(MSBuildThisFileDirectory)TransformWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)Translator.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)VideoWindow.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)VoxelGridWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)WeatherWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)xatlas.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
@@ -145,6 +87,7 @@
     <ClInclude Include="$(MSBuildThisFileDirectory)CameraWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ColliderWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ComponentsWindow.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)ContentBrowserWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)DecalWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)Editor.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)EmitterWindow.h" />
@@ -164,12 +107,10 @@
     <ClInclude Include="$(MSBuildThisFileDirectory)LightWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)MaterialPickerWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)MaterialWindow.h" />
-    <ClInclude Include="$(MSBuildThisFileDirectory)meshoptimizer\meshoptimizer.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)MeshWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ModelImporter.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)NameWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ObjectWindow.h" />
-    <ClInclude Include="$(MSBuildThisFileDirectory)OptionsWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)PaintToolWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)GraphicsWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ProfilerWindow.h" />
@@ -186,7 +127,9 @@
     <ClInclude Include="$(MSBuildThisFileDirectory)tiny_obj_loader.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)TransformWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)Translator.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)ufbx.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)VideoWindow.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)VoxelGridWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)WeatherWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)xatlas.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)yumin.h" />
@@ -206,56 +149,6 @@
       <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">true</DeploymentContent>
       <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">true</DeploymentContent>
     </None>
-    <None Include="$(MSBuildThisFileDirectory)terrain\grass.ini">
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</DeploymentContent>
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
-    </None>
-    <None Include="$(MSBuildThisFileDirectory)terrain\props.ini">
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</DeploymentContent>
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
-    </None>
-    <None Include="$(MSBuildThisFileDirectory)terrain\props.wiscene">
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</DeploymentContent>
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
-    </None>
-  </ItemGroup>
-  <ItemGroup>
-    <Image Include="$(MSBuildThisFileDirectory)terrain\base.jpg">
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</DeploymentContent>
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
-    </Image>
-    <Image Include="$(MSBuildThisFileDirectory)terrain\base_nor.jpg">
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</DeploymentContent>
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
-    </Image>
-    <Image Include="$(MSBuildThisFileDirectory)terrain\grassparticle.dds">
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</DeploymentContent>
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
-    </Image>
-    <Image Include="$(MSBuildThisFileDirectory)terrain\high_altitude.jpg">
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</DeploymentContent>
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
-    </Image>
-    <Image Include="$(MSBuildThisFileDirectory)terrain\high_altitude_nor.jpg">
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</DeploymentContent>
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
-    </Image>
-    <Image Include="$(MSBuildThisFileDirectory)terrain\low_altitude.jpg">
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</DeploymentContent>
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
-    </Image>
-    <Image Include="$(MSBuildThisFileDirectory)terrain\low_altitude_nor.jpg">
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</DeploymentContent>
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
-    </Image>
-    <Image Include="$(MSBuildThisFileDirectory)terrain\slope.jpg">
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</DeploymentContent>
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
-    </Image>
-    <Image Include="$(MSBuildThisFileDirectory)terrain\slope_nor.jpg">
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</DeploymentContent>
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
-    </Image>
   </ItemGroup>
   <ItemGroup>
     <Text Include="$(MSBuildThisFileDirectory)fonts\readme.txt">
@@ -266,7 +159,6 @@
       <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</DeploymentContent>
       <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
     </Text>
-    <Text Include="$(MSBuildThisFileDirectory)terrain\licenses.txt" />
   </ItemGroup>
   <ItemGroup>
     <Xml Include="$(MSBuildThisFileDirectory)languages\Magyar.xml">

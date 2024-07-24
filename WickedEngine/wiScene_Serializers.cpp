@@ -231,6 +231,20 @@ namespace wi::scene
 				anisotropy_strength = parallaxOcclusionMapping; // old version fix
 			}
 
+			if (seri.GetVersion() >= 3)
+			{
+				archive >> textures[TRANSPARENCYMAP].name;
+				archive >> textures[TRANSPARENCYMAP].uvset;
+			}
+			if (seri.GetVersion() >= 4)
+			{
+				archive >> blend_with_terrain_height;
+			}
+			if (seri.GetVersion() >= 5)
+			{
+				archive >> extinctionColor;
+			}
+
 			for (auto& x : textures)
 			{
 				if (!x.name.empty())
@@ -369,11 +383,24 @@ namespace wi::scene
 				archive << wi::helper::GetPathRelative(dir, textures[ANISOTROPYMAP].name);
 				archive << textures[ANISOTROPYMAP].uvset;
 			}
+
+			if (seri.GetVersion() >= 3)
+			{
+				archive << wi::helper::GetPathRelative(dir, textures[TRANSPARENCYMAP].name);
+				archive << textures[TRANSPARENCYMAP].uvset;
+			}
+			if (seri.GetVersion() >= 4)
+			{
+				archive << blend_with_terrain_height;
+			}
+			if (seri.GetVersion() >= 5)
+			{
+				archive << extinctionColor;
+			}
 		}
 	}
 	void MeshComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
 	{
-
 		if (archive.IsReadMode())
 		{
 			archive >> _flags;
@@ -449,6 +476,12 @@ namespace wi::scene
 			if (archive.GetVersion() >= 76)
 			{
 				archive >> subsets_per_lod;
+			}
+
+			if (seri.GetVersion() >= 3)
+			{
+				archive >> vertex_boneindices2;
+				archive >> vertex_boneweights2;
 			}
 
 			wi::jobsystem::Execute(seri.ctx, [&](wi::jobsystem::JobArgs args) {
@@ -533,6 +566,12 @@ namespace wi::scene
 				archive << subsets_per_lod;
 			}
 
+			if (seri.GetVersion() >= 3)
+			{
+				archive << vertex_boneindices2;
+				archive << vertex_boneweights2;
+			}
+
 		}
 	}
 	void ImpostorComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
@@ -594,6 +633,14 @@ namespace wi::scene
 			{
 				archive >> sort_priority;
 			}
+			if (seri.GetVersion() >= 3)
+			{
+				archive >> vertex_ao;
+			}
+
+			wi::jobsystem::Execute(seri.ctx, [&](wi::jobsystem::JobArgs args) {
+				CreateRenderData();
+			});
 		}
 		else
 		{
@@ -632,6 +679,10 @@ namespace wi::scene
 			{
 				archive << sort_priority;
 			}
+			if (seri.GetVersion() >= 3)
+			{
+				archive << vertex_ao;
+			}
 		}
 	}
 	void RigidBodyPhysicsComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
@@ -669,6 +720,16 @@ namespace wi::scene
 			{
 				archive >> mesh_lod;
 			}
+			if (seri.GetVersion() >= 2)
+			{
+				archive >> local_offset;
+			}
+			if (shape == CollisionShape::CYLINDER && seri.GetVersion() < 3)
+			{
+				// convert old assumption that was used in Bullet Physics:
+				capsule.height = box.halfextents.y;
+				capsule.radius = box.halfextents.x;
+			}
 		}
 		else
 		{
@@ -696,10 +757,16 @@ namespace wi::scene
 			{
 				archive << mesh_lod;
 			}
+			if (seri.GetVersion() >= 2)
+			{
+				archive << local_offset;
+			}
 		}
 	}
 	void SoftBodyPhysicsComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
 	{
+		wi::vector<uint32_t> graphicsToPhysicsVertexMapping;
+
 		if (archive.IsReadMode())
 		{
 			archive >> _flags;
@@ -725,6 +792,37 @@ namespace wi::scene
 				friction = 0.5f;
 			}
 
+			if (seri.GetVersion() >= 1)
+			{
+				archive >> vertex_radius;
+				archive >> detail;
+			}
+			else
+			{
+				SetWindEnabled(true);
+			}
+
+			if (seri.GetVersion() >= 2)
+			{
+				archive >> pressure;
+			}
+			else
+			{
+				// Convert weights from per-physics to per-graphics vertex:
+				//	Per graphics vertex is better, because regenerating soft body with different detail will keep the pinning
+				wi::vector<float> weights2(graphicsToPhysicsVertexMapping.size());
+				for (size_t i = 0; i < weights2.size(); ++i)
+				{
+					weights2[i] = weights[graphicsToPhysicsVertexMapping[i]];
+				}
+				std::swap(weights, weights2);
+			}
+
+			if (seri.GetVersion() >= 3)
+			{
+				archive >> physicsIndices;
+			}
+
 			_flags &= ~SAFE_TO_REGISTER;
 		}
 		else
@@ -739,6 +837,21 @@ namespace wi::scene
 			if (archive.GetVersion() >= 57)
 			{
 				archive << restitution;
+			}
+
+			if (seri.GetVersion() >= 1)
+			{
+				archive << vertex_radius;
+				archive << detail;
+			}
+			if (seri.GetVersion() >= 2)
+			{
+				archive << pressure;
+			}
+
+			if (seri.GetVersion() >= 3)
+			{
+				archive << physicsIndices;
 			}
 		}
 	}
@@ -859,7 +972,7 @@ namespace wi::scene
 					if (!lensFlareNames[i].empty())
 					{
 						lensFlareNames[i] = dir + lensFlareNames[i];
-						lensFlareRimTextures[i] = wi::resourcemanager::Load(lensFlareNames[i], wi::resourcemanager::Flags::IMPORT_RETAIN_FILEDATA);
+						lensFlareRimTextures[i] = wi::resourcemanager::Load(lensFlareNames[i]);
 					}
 				}
 			});
@@ -1152,6 +1265,13 @@ namespace wi::scene
 				}
 			}
 		}
+
+
+		if (seri.GetVersion() >= 2)
+		{
+			// Root Bone Name
+			SerializeEntity(archive, rootMotionBone, seri);
+		}
 	}
 	void AnimationDataComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
 	{
@@ -1231,7 +1351,7 @@ namespace wi::scene
 				if (!skyMapName.empty())
 				{
 					skyMapName = dir + skyMapName;
-					skyMap = wi::resourcemanager::Load(skyMapName, wi::resourcemanager::Flags::IMPORT_RETAIN_FILEDATA);
+					skyMap = wi::resourcemanager::Load(skyMapName);
 				}
 			}
 			if (archive.GetVersion() >= 40)
@@ -1244,7 +1364,7 @@ namespace wi::scene
 				if (!colorGradingMapName.empty())
 				{
 					colorGradingMapName = dir + colorGradingMapName;
-					colorGradingMap = wi::resourcemanager::Load(colorGradingMapName, wi::resourcemanager::Flags::IMPORT_COLORGRADINGLUT | wi::resourcemanager::Flags::IMPORT_RETAIN_FILEDATA);
+					colorGradingMap = wi::resourcemanager::Load(colorGradingMapName, wi::resourcemanager::Flags::IMPORT_COLORGRADINGLUT);
 				}
 			}
 
@@ -1376,7 +1496,7 @@ namespace wi::scene
 				if (!volumetricCloudsWeatherMapFirstName.empty())
 				{
 					volumetricCloudsWeatherMapFirstName = dir + volumetricCloudsWeatherMapFirstName;
-					volumetricCloudsWeatherMapFirst = wi::resourcemanager::Load(volumetricCloudsWeatherMapFirstName, wi::resourcemanager::Flags::IMPORT_RETAIN_FILEDATA);
+					volumetricCloudsWeatherMapFirst = wi::resourcemanager::Load(volumetricCloudsWeatherMapFirstName);
 				}
 			}
 
@@ -1386,7 +1506,7 @@ namespace wi::scene
 				if (!volumetricCloudsWeatherMapSecondName.empty())
 				{
 					volumetricCloudsWeatherMapSecondName = dir + volumetricCloudsWeatherMapSecondName;
-					volumetricCloudsWeatherMapSecond = wi::resourcemanager::Load(volumetricCloudsWeatherMapSecondName, wi::resourcemanager::Flags::IMPORT_RETAIN_FILEDATA);
+					volumetricCloudsWeatherMapSecond = wi::resourcemanager::Load(volumetricCloudsWeatherMapSecondName);
 				}
 
 				archive >> volumetricCloudParameters.layerFirst.curlNoiseHeightFraction;
@@ -1450,6 +1570,10 @@ namespace wi::scene
 				archive >> rain_scale;
 				archive >> rain_splash_scale;
 				archive >> rain_color;
+			}
+			if (seri.GetVersion() >= 6)
+			{
+				archive >> oceanParameters.extinctionColor;
 			}
 		}
 		else
@@ -1671,6 +1795,10 @@ namespace wi::scene
 				archive << rain_splash_scale;
 				archive << rain_color;
 			}
+			if (seri.GetVersion() >= 6)
+			{
+				archive << oceanParameters.extinctionColor;
+			}
 		}
 	}
 	void SoundComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
@@ -1696,9 +1824,10 @@ namespace wi::scene
 				if (!filename.empty())
 				{
 					filename = dir + filename;
-					soundResource = wi::resourcemanager::Load(filename, wi::resourcemanager::Flags::IMPORT_RETAIN_FILEDATA);
-					soundinstance.SetLooped(IsLooped());
-					wi::audio::CreateSoundInstance(&soundResource.GetSound(), &soundinstance);
+					soundResource = wi::resourcemanager::Load(filename);
+					// Note: sound instance can't be created yet, as soundResource is not necessarily ready at this point
+					//	Consider when multiple threads are loading the same sound, one thread will be loading the data,
+					//	the others return early with the resource that will be containing the data once it has been loaded.
 				}
 			});
 		}
@@ -1733,7 +1862,7 @@ namespace wi::scene
 				if (!filename.empty())
 				{
 					filename = dir + filename;
-					videoResource = wi::resourcemanager::Load(filename, wi::resourcemanager::Flags::IMPORT_RETAIN_FILEDATA);
+					videoResource = wi::resourcemanager::Load(filename);
 					wi::video::CreateVideoInstance(&videoResource.GetVideo(), &videoinstance);
 				}
 			});
@@ -1945,6 +2074,7 @@ namespace wi::scene
 	}
 	void HumanoidComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
 	{
+		XMFLOAT3 default_look_direction = XMFLOAT3(0, 0, 1);
 		if (archive.IsReadMode())
 		{
 			archive >> _flags;
@@ -1957,6 +2087,12 @@ namespace wi::scene
 			for (auto& entity : bones)
 			{
 				SerializeEntity(archive, entity, seri);
+			}
+
+			if (seri.GetVersion() >= 1)
+			{
+				archive >> ragdoll_fatness;
+				archive >> ragdoll_headsize;
 			}
 		}
 		else
@@ -1971,6 +2107,12 @@ namespace wi::scene
 			for (auto& entity : bones)
 			{
 				SerializeEntity(archive, entity, seri);
+			}
+
+			if (seri.GetVersion() >= 1)
+			{
+				archive << ragdoll_fatness;
+				archive << ragdoll_headsize;
 			}
 		}
 	}
@@ -2024,6 +2166,7 @@ namespace wi::scene
 
 		// With this we will ensure that serialized entities are unique and persistent across the scene:
 		EntitySerializer seri;
+		seri.ctx.priority = wi::jobsystem::Priority::Low; // serialization tasks will be low priority to not block rendering if scene loading is asynchronous
 
 		if(archive.GetVersion() >= 84)
 		{
@@ -2142,7 +2285,9 @@ namespace wi::scene
 			}
 		}
 
-		wi::backlog::post("Scene serialize took " + std::to_string(timer.elapsed_seconds()) + " sec");
+		char text[64] = {};
+		snprintf(text, arraysize(text), "Scene::Serialize took %.2f seconds", timer.elapsed_seconds());
+		wi::backlog::post(text);
 	}
 
 	void Scene::DDGI::Serialize(wi::Archive& archive)
@@ -2168,27 +2313,26 @@ namespace wi::scene
 			archive >> data;
 			if(!data.empty())
 			{
-
 				TextureDesc desc;
+				desc.bind_flags = BindFlag::SHADER_RESOURCE;
 				desc.width = DDGI_COLOR_TEXELS * grid_dimensions.x * grid_dimensions.y;
 				desc.height = DDGI_COLOR_TEXELS * grid_dimensions.z;
-				if (data.size() == desc.width * desc.height * GetFormatStride(Format::R9G9B9E5_SHAREDEXP))
+				desc.format = Format::BC6H_UF16;
+				const uint32_t num_blocks_x = desc.width / GetFormatBlockSize(desc.format);
+				const uint32_t num_blocks_y = desc.height / GetFormatBlockSize(desc.format);
+				if (data.size() == num_blocks_x * num_blocks_y * GetFormatStride(desc.format))
 				{
-					desc.format = Format::R9G9B9E5_SHAREDEXP;
+					SubresourceData initdata;
+					initdata.data_ptr = data.data();
+					initdata.row_pitch = num_blocks_x * GetFormatStride(desc.format);
+
+					device->CreateTexture(&desc, &initdata, &color_texture);
+					device->SetName(&color_texture, "ddgi.color_texture[serialized]");
 				}
 				else
 				{
-					assert(data.size() == desc.width * desc.height * GetFormatStride(Format::R16G16B16A16_FLOAT));
-					desc.format = Format::R16G16B16A16_FLOAT;
+					wi::backlog::post("The serialized DDGI irradiance data structure is different from current version, discarding irradiance data.", wi::backlog::LogLevel::Warning);
 				}
-				desc.bind_flags = BindFlag::SHADER_RESOURCE;
-
-				SubresourceData initdata;
-				initdata.data_ptr = data.data();
-				initdata.row_pitch = desc.width * GetFormatStride(desc.format);
-
-				device->CreateTexture(&desc, &initdata, &color_texture[0]);
-				device->SetName(&color_texture[0], "ddgi.color_texture[serialized]");
 			}
 
 			// depth texture:
@@ -2199,27 +2343,43 @@ namespace wi::scene
 				desc.width = DDGI_DEPTH_TEXELS * grid_dimensions.x * grid_dimensions.y;
 				desc.height = DDGI_DEPTH_TEXELS * grid_dimensions.z;
 				desc.format = Format::R16G16_FLOAT;
-				desc.bind_flags = BindFlag::UNORDERED_ACCESS | BindFlag::SHADER_RESOURCE;
+				desc.bind_flags = BindFlag::SHADER_RESOURCE;
 
 				SubresourceData initdata;
 				initdata.data_ptr = data.data();
 				initdata.row_pitch = desc.width * GetFormatStride(desc.format);
 
-				device->CreateTexture(&desc, &initdata, &depth_texture[0]);
-				device->SetName(&depth_texture[0], "ddgi.depth_texture[seriaized]");
+				device->CreateTexture(&desc, &initdata, &depth_texture);
+				device->SetName(&depth_texture, "ddgi.depth_texture[serialized]");
 			}
 
-			// offset buffer:
+			// offset texture:
 			archive >> data;
 			if(!data.empty())
 			{
-				GPUBufferDesc desc;
-				desc.stride = sizeof(DDGIProbeOffset);
-				desc.size = desc.stride * grid_dimensions.x * grid_dimensions.y * grid_dimensions.z;
-				desc.bind_flags = BindFlag::UNORDERED_ACCESS | BindFlag::SHADER_RESOURCE;
-				desc.misc_flags = ResourceMiscFlag::BUFFER_RAW;
-				device->CreateBuffer(&desc, data.data(), &offset_buffer);
-				device->SetName(&offset_buffer, "ddgi.offset_buffer[serialized]");
+				TextureDesc desc;
+				desc.type = TextureDesc::Type::TEXTURE_3D;
+				desc.width = grid_dimensions.x;
+				desc.height = grid_dimensions.z;
+				desc.depth = grid_dimensions.y;
+				desc.format = Format::R10G10B10A2_UNORM;
+				desc.bind_flags = BindFlag::SHADER_RESOURCE;
+
+				const size_t required_size = ComputeTextureMemorySizeInBytes(desc);
+				if (data.size() == required_size)
+				{
+					SubresourceData initdata;
+					initdata.data_ptr = data.data();
+					initdata.row_pitch = desc.width * GetFormatStride(desc.format);
+					initdata.slice_pitch = initdata.row_pitch * desc.height;
+
+					device->CreateTexture(&desc, &initdata, &offset_texture);
+					device->SetName(&offset_texture, "ddgi.offset_texture[serialized]");
+				}
+				else
+				{
+					wi::backlog::post("The serialized DDGI probe offset structure is different from current version, discarding probe offset data.", wi::backlog::LogLevel::Warning);
+				}
 			}
 		}
 		else
@@ -2235,64 +2395,28 @@ namespace wi::scene
 			}
 
 			wi::vector<uint8_t> data;
-			if (color_texture[0].IsValid())
+			if (color_texture.IsValid())
 			{
-				bool success = wi::helper::saveTextureToMemory(color_texture[0], data);
+				bool success = wi::helper::saveTextureToMemory(color_texture, data);
 				assert(success);
 			}
 			archive << data;
 
 			data.clear();
-			if (depth_texture[0].IsValid())
+			if (depth_texture.IsValid())
 			{
-				bool success = wi::helper::saveTextureToMemory(depth_texture[0], data);
+				bool success = wi::helper::saveTextureToMemory(depth_texture, data);
 				assert(success);
 			}
 			archive << data;
 
-			// Download and serialize offset buffer:
-			if(offset_buffer.IsValid())
+			data.clear();
+			if (offset_texture.IsValid())
 			{
-				GPUBufferDesc desc = offset_buffer.desc;
-				desc.usage = wi::graphics::Usage::READBACK;
-				desc.bind_flags = {};
-				desc.misc_flags = {};
-				GPUBuffer staging;
-				bool success = device->CreateBuffer(&desc, nullptr, &staging);
+				bool success = wi::helper::saveTextureToMemory(offset_texture, data);
 				assert(success);
-
-				CommandList cmd = device->BeginCommandList();
-
-				{
-					GPUBarrier barriers[] = {
-						GPUBarrier::Buffer(&offset_buffer,ResourceState::SHADER_RESOURCE,ResourceState::COPY_SRC),
-					};
-					device->Barrier(barriers, arraysize(barriers), cmd);
-				}
-
-				device->CopyResource(&staging, &offset_buffer, cmd);
-
-				{
-					GPUBarrier barriers[] = {
-						GPUBarrier::Buffer(&offset_buffer,ResourceState::COPY_SRC,ResourceState::SHADER_RESOURCE),
-					};
-					device->Barrier(barriers, arraysize(barriers), cmd);
-				}
-
-				device->SubmitCommandLists();
-				device->WaitForGPU();
-
-				// serialize like vector<uint8_t>:
-				archive << staging.mapped_size;
-				for (size_t i = 0; i < staging.mapped_size; ++i)
-				{
-					archive << ((uint8_t*)staging.mapped_data)[i];
-				}
 			}
-			else
-			{
-				archive << size_t(0);
-			}
+			archive << data;
 		}
 	}
 

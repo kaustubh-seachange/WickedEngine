@@ -264,6 +264,9 @@ namespace wi::gui
 		mutable wi::Sprite tooltipSprite;
 		mutable wi::SpriteFont tooltipFont;
 		mutable wi::SpriteFont scripttipFont;
+		float angular_highlight_width = 0;
+		float angular_highlight_timer = 0;
+		XMFLOAT4 angular_highlight_color = XMFLOAT4(1, 1, 1, 1);
 
 	public:
 		Widget();
@@ -284,7 +287,7 @@ namespace wi::gui
 		void SetSize(const XMFLOAT2& value);
 		XMFLOAT2 GetPos() const;
 		virtual XMFLOAT2 GetSize() const;
-		WIDGETSTATE GetState() const;
+		virtual WIDGETSTATE GetState() const;
 		virtual void SetEnabled(bool val);
 		bool IsEnabled() const;
 		virtual void SetVisible(bool val);
@@ -295,7 +298,7 @@ namespace wi::gui
 
 		virtual void ResizeLayout() {};
 		virtual void Update(const wi::Canvas& canvas, float dt);
-		virtual void Render(const wi::Canvas& canvas, wi::graphics::CommandList cmd) const {}
+		virtual void Render(const wi::Canvas& canvas, wi::graphics::CommandList cmd) const;
 		virtual void RenderTooltip(const wi::Canvas& canvas, wi::graphics::CommandList cmd) const;
 
 		// last param default: set color for all states
@@ -338,6 +341,11 @@ namespace wi::gui
 		void SetLocalizationEnabled(bool value) { localization_enabled = value ? LocalizationEnabled::All : LocalizationEnabled::None; }
 		virtual void ExportLocalization(wi::Localization& localization) const;
 		virtual void ImportLocalization(const wi::Localization& localization);
+
+		void SetAngularHighlightWidth(float value) { angular_highlight_width = value; };
+		float GetAngularHighlightWidth() const { return angular_highlight_width; };
+		void SetAngularHighlightColor(const XMFLOAT4& value) { angular_highlight_color = value; };
+		XMFLOAT4 GetAngularHighlightColor() const { return angular_highlight_color; };
 	};
 
 	// Clickable, draggable box
@@ -388,6 +396,7 @@ namespace wi::gui
 		void SetListLength(float size) { list_length = size; }
 		// The scrolling offset that should be applied to the list items
 		float GetOffset() const { return list_offset; }
+		void SetOffset(float value);
 		// This can be called by user for extra scrolling on top of base functionality
 		void Scroll(float amount) { scrollbar_delta -= amount; }
 		// How much the max scrolling will offset the list even further than it would be necessary for fitting
@@ -396,7 +405,7 @@ namespace wi::gui
 		//	1: full extra offset
 		void SetOverScroll(float amount) { overscroll = amount; }
 		// Check whether the scrollbar is required (when the items don't fit and scrolling could be used)
-		bool IsScrollbarRequired() const { return scrollbar_granularity < 0.999f; }
+		bool IsScrollbarRequired() const { return scrollbar_granularity < 1; }
 		void SetSafeArea(float value) { safe_area = value; }
 
 		enum SCROLLBAR_STATE
@@ -423,6 +432,7 @@ namespace wi::gui
 	class Label : public Widget
 	{
 	protected:
+		bool wrap_enabled = true;
 	public:
 		void Create(const std::string& name);
 
@@ -434,6 +444,8 @@ namespace wi::gui
 
 		float scrollbar_width = 18;
 		ScrollBar scrollbar;
+
+		void SetWrapEnabled(bool value) { wrap_enabled = value; }
 	};
 
 	// Text input box
@@ -508,6 +520,7 @@ namespace wi::gui
 		void SetColor(wi::Color color, int id = -1) override;
 		void SetTheme(const Theme& theme, int id = -1) override;
 		const char* GetWidgetTypeName() const override { return "Slider"; }
+		WIDGETSTATE GetState() const override { return std::max(state, valueInputField.GetState()); };
 
 		void OnSlide(std::function<void(EventArgs args)> func);
 
@@ -547,6 +560,8 @@ namespace wi::gui
 		int selected = -1;
 		int maxVisibleItemCount = 8;
 		int firstItemVisible = 0;
+		bool drop_arrow = true;
+		float fixed_drop_width = 0; // 0 = not fixed, takes width from base scale
 
 		// While the widget is active (rolled down) these are the inner states that control behaviour
 		enum COMBOSTATE
@@ -573,6 +588,7 @@ namespace wi::gui
 		std::wstring invalid_selection_text;
 
 		float GetDropOffset(const wi::Canvas& canvas) const;
+		float GetDropX(const wi::Canvas& canvas) const;
 		float GetItemOffset(const wi::Canvas& canvas, int index) const;
 	public:
 		void Create(const std::string& name);
@@ -588,6 +604,7 @@ namespace wi::gui
 		void SetSelectedByUserdata(uint64_t userdata);
 		void SetSelectedByUserdataWithoutCallback(uint64_t userdata); // SetSelectedByUserdata() but the OnSelect callback will not be executed
 		int GetSelected() const;
+		uint64_t GetSelectedUserdata() const;
 		void SetItemText(int index, const std::string& text);
 		void SetItemUserdata(int index, uint64_t userdata);
 		std::string GetItemText(int index) const;
@@ -607,6 +624,11 @@ namespace wi::gui
 
 		void ExportLocalization(wi::Localization& localization) const override;
 		void ImportLocalization(const wi::Localization& localization) override;
+
+		void SetDropArrowEnabled(bool value) { drop_arrow = value; }
+		bool IsDropArrowEnabled() const { return drop_arrow; }
+		void SetFixedDropWidth(float value) { fixed_drop_width = value; }
+		float GetFixedDropWidth() const { return fixed_drop_width; }
 	};
 
 	// Widget container
@@ -621,19 +643,41 @@ namespace wi::gui
 		std::function<void(EventArgs args)> onCollapse;
 		std::function<void()> onResize;
 
+		float resizehitboxwidth = 6;
+		enum RESIZE_STATE
+		{
+			RESIZE_STATE_NONE,
+
+			RESIZE_STATE_LEFT,
+			RESIZE_STATE_TOP,
+			RESIZE_STATE_RIGHT,
+			RESIZE_STATE_BOTTOM,
+
+			RESIZE_STATE_TOPLEFT,
+			RESIZE_STATE_TOPRIGHT,
+			RESIZE_STATE_BOTTOMRIGHT,
+			RESIZE_STATE_BOTTOMLEFT,
+		} resize_state = RESIZE_STATE_NONE;
+		XMFLOAT2 resize_begin = XMFLOAT2(0, 0);
+		float resize_blink_timer = 0;
+
 	public:
 		enum class WindowControls
 		{
 			NONE = 0,
-			RESIZE_TOPLEFT = 1 << 0,
-			RESIZE_TOPRIGHT = 1 << 1,
-			RESIZE_BOTTOMLEFT = 1 << 2,
-			RESIZE_BOTTOMRIGHT = 1 << 3,
-			MOVE = 1 << 4,
-			CLOSE = 1 << 5,
-			COLLAPSE = 1 << 6,
+			RESIZE_LEFT = 1 << 0,
+			RESIZE_TOP = 1 << 1,
+			RESIZE_RIGHT = 1 << 2,
+			RESIZE_BOTTOM = 1 << 3,
+			RESIZE_TOPLEFT = 1 << 4,
+			RESIZE_TOPRIGHT = 1 << 5,
+			RESIZE_BOTTOMLEFT = 1 << 6,
+			RESIZE_BOTTOMRIGHT = 1 << 7,
+			MOVE = 1 << 8,
+			CLOSE = 1 << 9,
+			COLLAPSE = 1 << 10,
 
-			RESIZE = RESIZE_TOPLEFT | RESIZE_TOPRIGHT | RESIZE_BOTTOMLEFT | RESIZE_BOTTOMRIGHT,
+			RESIZE = RESIZE_LEFT | RESIZE_TOP | RESIZE_RIGHT | RESIZE_BOTTOM | RESIZE_TOPLEFT | RESIZE_TOPRIGHT | RESIZE_BOTTOMLEFT | RESIZE_BOTTOMRIGHT,
 			CLOSE_AND_COLLAPSE = CLOSE | COLLAPSE,
 			ALL = RESIZE | MOVE | CLOSE | COLLAPSE,
 		};
@@ -674,14 +718,11 @@ namespace wi::gui
 
 		Button closeButton;
 		Button collapseButton;
-		Button resizeDragger_UpperLeft;
-		Button resizeDragger_UpperRight;
-		Button resizeDragger_BottomLeft;
-		Button resizeDragger_BottomRight;
 		Button moveDragger;
 		Label label;
 		ScrollBar scrollbar_vertical;
 		ScrollBar scrollbar_horizontal;
+		WindowControls controls;
 
 		void ExportLocalization(wi::Localization& localization) const override;
 		void ImportLocalization(const wi::Localization& localization) override;
@@ -741,6 +782,7 @@ namespace wi::gui
 	protected:
 		std::function<void(EventArgs args)> onSelect;
 		std::function<void(EventArgs args)> onDelete;
+		std::function<void(EventArgs args)> onDoubleClick;
 		int item_highlight = -1;
 		int opener_highlight = -1;
 
@@ -752,6 +794,18 @@ namespace wi::gui
 
 		float GetItemOffset(int index) const;
 		bool DoesItemHaveChildren(int index) const;
+
+		float resizehitboxwidth = 6;
+		enum RESIZE_STATE
+		{
+			RESIZE_STATE_NONE,
+			RESIZE_STATE_BOTTOM,
+		} resize_state = RESIZE_STATE_NONE;
+		XMFLOAT2 resize_begin = XMFLOAT2(0, 0);
+		float resize_blink_timer = 0;
+
+		void ComputeScrollbarLength();
+
 	public:
 		void Create(const std::string& name);
 
@@ -762,6 +816,8 @@ namespace wi::gui
 
 		void ClearSelection();
 		void Select(int index);
+		void FocusOnItem(int index);
+		void FocusOnItemByUserdata(uint64_t userdata);
 
 		int GetItemCount() const { return (int)items.size(); }
 		const Item& GetItem(int index) const;
@@ -774,6 +830,7 @@ namespace wi::gui
 
 		void OnSelect(std::function<void(EventArgs args)> func);
 		void OnDelete(std::function<void(EventArgs args)> func);
+		void OnDoubleClick(std::function<void(EventArgs args)> func);
 
 		ScrollBar scrollbar;
 	};

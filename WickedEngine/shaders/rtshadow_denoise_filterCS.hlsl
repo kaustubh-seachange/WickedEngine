@@ -6,9 +6,9 @@ PUSHCONSTANT(postprocess, PostProcess);
 #define float16_t2 min16float2
 #define float16_t3 min16float3
 
-Texture2D<float16_t3> normals : register(t0);
+Texture2D<float3> normals : register(t0);
 StructuredBuffer<uint4> metadata : register(t1);
-Texture2D<float16_t2> input : register(t2);
+Texture2D<float2> input : register(t2);
 
 RWTexture2D<float2> history : register(u0);
 RWTexture2D<unorm float4> output : register(u1);
@@ -37,7 +37,7 @@ float FFX_DNSR_Shadows_ReadDepth(uint2 did)
 }
 float16_t3 FFX_DNSR_Shadows_ReadNormals(uint2 did)
 {
-	return normalize((float16_t3)normals[did] * 2 - 1);
+	return normalize((float16_t3)normals[did] - 0.5);
 }
 
 bool FFX_DNSR_Shadows_IsShadowReciever(uint2 did)

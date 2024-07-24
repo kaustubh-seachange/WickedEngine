@@ -16,6 +16,7 @@ public:
 	wi::gui::CheckBox occlusionCullingCheckBox;
 	wi::gui::CheckBox visibilityComputeShadingCheckBox;
 	wi::gui::Slider resolutionScaleSlider;
+	wi::gui::Slider streamingSlider;
 	wi::gui::Slider GIBoostSlider;
 	wi::gui::CheckBox surfelGICheckBox;
 	wi::gui::ComboBox surfelGIDebugComboBox;
@@ -30,7 +31,6 @@ public:
 	wi::gui::CheckBox vxgiCheckBox;
 	wi::gui::ComboBox vxgiDebugCombo;
 	wi::gui::CheckBox vxgiReflectionsCheckBox;
-	wi::gui::CheckBox vxgiFullresCheckBox;
 	wi::gui::Slider vxgiVoxelSizeSlider;
 	wi::gui::Slider vxgiRayStepSizeSlider;
 	wi::gui::Slider vxgiMaxDistanceSlider;
@@ -64,6 +64,8 @@ public:
 	wi::gui::Slider raytracedReflectionsRangeSlider;
 	wi::gui::CheckBox raytracedDiffuseCheckBox;
 	wi::gui::Slider raytracedDiffuseRangeSlider;
+	wi::gui::CheckBox ssgiCheckBox;
+	wi::gui::Slider ssgiDepthRejectionSlider;
 	wi::gui::CheckBox screenSpaceShadowsCheckBox;
 	wi::gui::Slider screenSpaceShadowsStepCountSlider;
 	wi::gui::Slider screenSpaceShadowsRangeSlider;
@@ -109,5 +111,7 @@ public:
 	void Update();
 
 	void ResizeLayout() override;
+
+	void ApplySamplerSettings();
 };
 

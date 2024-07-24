@@ -9,7 +9,13 @@
 
 PUSHCONSTANT(push, DDGIPushConstants);
 
+StructuredBuffer<uint> rayallocationBuffer : register(t0);
+Buffer<uint> raycountBuffer : register(t1);
+
 RWStructuredBuffer<DDGIRayDataPacked> rayBuffer : register(u0);
+
+groupshared float shared_inconsistency[DDGI_COLOR_RESOLUTION * DDGI_COLOR_RESOLUTION];
+groupshared uint shared_rayCount;
 
 static const uint THREADCOUNT = 32;
 
@@ -27,7 +33,13 @@ float3 spherical_fibonacci(float i, float n)
 [numthreads(THREADCOUNT, 1, 1)]
 void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 {
-	const uint probeIndex = Gid.x;
+	const uint allocCount = rayallocationBuffer[3];
+	if(DTid.x >= allocCount)
+		return;
+	const uint rayAlloc = rayallocationBuffer[4 + DTid.x];
+	const uint probeIndex = rayAlloc & 0xFFFFF;
+	const uint rayIndex = rayAlloc >> 20u;
+	const uint rayCount = raycountBuffer[probeIndex] * DDGI_RAY_BUCKET_COUNT;
 	const uint3 probeCoord = ddgi_probe_coord(probeIndex);
 	const float3 probePos = ddgi_probe_position(probeCoord);
 
@@ -35,14 +47,13 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 	rng.init(DTid.xx, GetFrame().frame_count);
 
 	const float3x3 random_orientation = (float3x3)g_xTransform;
-
-	for (uint rayIndex = groupIndex; rayIndex < push.rayCount; rayIndex += THREADCOUNT)
+	
 	{
 		RayDesc ray;
 		ray.Origin = probePos;
 		ray.TMin = 0; // don't need TMin because we are not tracing from a surface
 		ray.TMax = FLT_MAX;
-		ray.Direction = normalize(mul(random_orientation, spherical_fibonacci(rayIndex, push.rayCount)));
+		ray.Direction = normalize(mul(random_orientation, spherical_fibonacci(rayIndex, rayCount)));
 
 #ifdef RTAPI
 		wiRayQuery q;
@@ -101,13 +112,10 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 			prim.instanceIndex = q.CommittedInstanceID();
 			prim.subsetIndex = q.CommittedGeometryIndex();
 
-			if (!q.CommittedTriangleFrontFace())
-			{
-				surface.flags |= SURFACE_FLAG_BACKFACE;
-			}
+			surface.SetBackface(!q.CommittedTriangleFrontFace());
 
 			if (!surface.load(prim, q.CommittedTriangleBarycentrics()))
-				break;
+				return;
 
 #else
 
@@ -115,13 +123,10 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 			ray.Origin = ray.Origin + ray.Direction * hit.distance;
 			hit_depth = hit.distance;
 
-			if (hit.is_backface)
-			{
-				surface.flags |= SURFACE_FLAG_BACKFACE;
-			}
+			surface.SetBackface(hit.is_backface);
 
 			if (!surface.load(hit.primitiveID, hit.bary))
-				break;
+				return;
 
 #endif // RTAPI
 
@@ -189,7 +194,7 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 						{
 							const float3 lightColor = light.GetColor().rgb;
 
-							lighting.direct.diffuse = lightColor * attenuation_pointlight(dist, dist2, range, range2);
+							lighting.direct.diffuse = lightColor * attenuation_pointlight(dist2, range, range2);
 						}
 					}
 				}
@@ -221,7 +226,7 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 							{
 								const float3 lightColor = light.GetColor().rgb;
 
-								lighting.direct.diffuse = lightColor * attenuation_spotlight(dist, dist2, range, range2, spot_factor, light.GetAngleScale(), light.GetAngleOffset());
+								lighting.direct.diffuse = lightColor * attenuation_spotlight(dist2, range, range2, spot_factor, light.GetAngleScale(), light.GetAngleOffset());
 							}
 						}
 					}
@@ -242,7 +247,7 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 #ifdef RTAPI
 					q.TraceRayInline(
 						scene_acceleration_structure,	// RaytracingAccelerationStructure AccelerationStructure
-						RAY_FLAG_CULL_BACK_FACING_TRIANGLES |
+						RAY_FLAG_CULL_FRONT_FACING_TRIANGLES |
 						RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES |
 						RAY_FLAG_CULL_FRONT_FACING_TRIANGLES |
 						RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,	// uint RayFlags

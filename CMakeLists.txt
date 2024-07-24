@@ -1,14 +1,21 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.12)
 
 set(WICKED_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 option(WICKED_DYNAMIC_LIBRARY "Build WickedEngine as a dynamic library" OFF)
+option(USE_LIBCXX "Link WickedEngine to llvm libc++ library - only available with the Clang compiler" OFF)
 
 option(WICKED_EDITOR "Build WickedEngine editor" ON)
 option(WICKED_TESTS "Build WickedEngine tests" ON)
 option(WICKED_IMGUI_EXAMPLE "Build WickedEngine imgui example" ON)
-option(WICKED_LINUX_TEMPLATE "Build WickedEngine Linux template" ON)
 
+include(CMakeDependentOption)
+
+if(UNIX)
+    option(WICKED_LINUX_TEMPLATE "Build WickedEngine Linux template" ON)
+elseif(WIN32)
+    option(WICKED_WINDOWS_TEMPLATE "Build WickedEngine Windows template" ON)
+endif()
 
 # Configure CMake global variables
 set(CMAKE_CXX_STANDARD 17)
@@ -31,7 +38,21 @@ elseif(UNIX)
     set(DXC_TARGET "dxc")
 endif()
 
+
+if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fdeclspec -fms-extensions")
+	set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} $<$<NOT:$<WICKED_DYNAMIC_LIBRARY>>:--for-linker=-no-pie>" )
+	if (USE_LIBCXX)
+		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
+		set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -stdlib=libc++ -lc++abi")
+	endif()
+elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+else()
+endif()
+
+
 add_subdirectory(WickedEngine)
+add_subdirectory(Content)
 
 if (WICKED_EDITOR)
     add_subdirectory(Editor)
@@ -48,4 +69,8 @@ endif()
 
 if (WICKED_LINUX_TEMPLATE)
     add_subdirectory(Template_Linux)
+endif()
+
+if (WICKED_WINDOWS_TEMPLATE)
+    add_subdirectory(Template_Windows)
 endif()

@@ -60,6 +60,7 @@ namespace wi::input
 		KEYBOARD_BUTTON_SUBTRACT,
 		KEYBOARD_BUTTON_DECIMAL,
 		KEYBOARD_BUTTON_DIVIDE,
+		KEYBOARD_BUTTON_TAB,
 
 		CHARACTER_RANGE_START = 65, // letter A
 
@@ -181,6 +182,9 @@ namespace wi::input
 	// send various feedback to the controller
 	void SetControllerFeedback(const ControllerFeedback& data, int playerindex = 0);
 
+	// Check if left mouse button was double clicked in the current frame:
+	bool IsDoubleClicked();
+
 	struct Pen
 	{
 		XMFLOAT2 position = {};
@@ -202,6 +206,20 @@ namespace wi::input
 		XMFLOAT2 pos;
 	};
 	const wi::vector<Touch>& GetTouches();
+
+	enum CURSOR
+	{
+		CURSOR_DEFAULT,
+		CURSOR_TEXTINPUT,
+		CURSOR_RESIZEALL,
+		CURSOR_RESIZE_NS,
+		CURSOR_RESIZE_EW,
+		CURSOR_RESIZE_NESW,
+		CURSOR_RESIZE_NWSE,
+		CURSOR_HAND,
+		CURSOR_NOTALLOWED,
+	};
+	void SetCursor(CURSOR cursor);
 
 };
 

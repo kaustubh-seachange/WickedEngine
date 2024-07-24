@@ -9,7 +9,7 @@ void HumanoidWindow::Create(EditorComponent* _editor)
 	editor = _editor;
 
 	wi::gui::Window::Create(ICON_HUMANOID " Humanoid", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE);
-	SetSize(XMFLOAT2(670, 540));
+	SetSize(XMFLOAT2(670, 580));
 
 	closeButton.SetTooltip("Delete HumanoidComponent");
 	OnClose([=](wi::gui::EventArgs args) {
@@ -22,7 +22,7 @@ void HumanoidWindow::Create(EditorComponent* _editor)
 
 		editor->RecordEntity(archive, entity);
 
-		editor->optionsWnd.RefreshEntityTree();
+		editor->componentsWnd.RefreshEntityTree();
 		});
 
 	float x = 60;
@@ -32,7 +32,7 @@ void HumanoidWindow::Create(EditorComponent* _editor)
 	float wid = 220;
 
 	infoLabel.Create("");
-	infoLabel.SetSize(XMFLOAT2(100, 50));
+	infoLabel.SetSize(XMFLOAT2(100, 80));
 	infoLabel.SetText("This window will stay open even if you select other entities until it is collapsed, so you can select other bone entities.");
 	AddWidget(&infoLabel);
 
@@ -168,6 +168,34 @@ void HumanoidWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&headSizeSlider);
 
+	ragdollFatnessSlider.Create(0.5f, 2, 1, 1000, "Ragdoll fatness: ");
+	ragdollFatnessSlider.SetTooltip("Adjust overall fatness of ragdoll physics skeleton.");
+	ragdollFatnessSlider.SetSize(XMFLOAT2(wid, hei));
+	ragdollFatnessSlider.OnSlide([=](wi::gui::EventArgs args) {
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		HumanoidComponent* humanoid = scene.humanoids.GetComponent(entity);
+		if (humanoid != nullptr)
+		{
+			humanoid->ragdoll_fatness = args.fValue;
+			humanoid->ragdoll = {}; // request recreate
+		}
+	});
+	AddWidget(&ragdollFatnessSlider);
+
+	ragdollHeadSizeSlider.Create(0.5f, 2, 1, 1000, "Ragdoll head: ");
+	ragdollHeadSizeSlider.SetTooltip("Adjust overall size of ragdoll physics head.");
+	ragdollHeadSizeSlider.SetSize(XMFLOAT2(wid, hei));
+	ragdollHeadSizeSlider.OnSlide([=](wi::gui::EventArgs args) {
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		HumanoidComponent* humanoid = scene.humanoids.GetComponent(entity);
+		if (humanoid != nullptr)
+		{
+			humanoid->ragdoll_headsize = args.fValue;
+			humanoid->ragdoll = {}; // request recreate
+		}
+		});
+	AddWidget(&ragdollHeadSizeSlider);
+
 	boneList.Create("Bones: ");
 	boneList.SetSize(XMFLOAT2(wid, 200));
 	boneList.SetPos(XMFLOAT2(4, y += step));
@@ -200,7 +228,7 @@ void HumanoidWindow::Create(EditorComponent* _editor)
 		// record NEW selection state...
 		editor->RecordSelection(archive);
 
-		editor->optionsWnd.RefreshEntityTree();
+		editor->componentsWnd.RefreshEntityTree();
 
 		});
 	AddWidget(&boneList);
@@ -241,6 +269,8 @@ void HumanoidWindow::SetEntity(Entity entity)
 			eyeRotMaxXSlider.SetValue(wi::math::RadiansToDegrees(humanoid->eye_rotation_max.x));
 			eyeRotMaxYSlider.SetValue(wi::math::RadiansToDegrees(humanoid->eye_rotation_max.y));
 			eyeRotSpeedSlider.SetValue(humanoid->eye_rotation_speed);
+			ragdollFatnessSlider.SetValue(humanoid->ragdoll_fatness);
+			ragdollHeadSizeSlider.SetValue(humanoid->ragdoll_headsize);
 
 			Entity bone = humanoid->bones[size_t(HumanoidComponent::HumanoidBone::Head)];
 			const TransformComponent* transform = scene.transforms.GetComponent(bone);
@@ -475,32 +505,6 @@ void HumanoidWindow::RefreshBoneList()
 	}
 }
 
-void HumanoidWindow::Update(const wi::Canvas& canvas, float dt)
-{
-	wi::gui::Window::Update(canvas, dt);
-
-	if (lookatMouseCheckBox.GetCheck())
-	{
-		Scene& scene = editor->GetCurrentScene();
-		const CameraComponent& camera = editor->GetCurrentEditorScene().camera;
-		const wi::input::MouseState& mouse = wi::input::GetMouseState();
-		wi::primitive::Ray ray = wi::renderer::GetPickRay((long)mouse.position.x, (long)mouse.position.y, canvas, camera);
-
-		for (size_t i = 0; i < scene.humanoids.GetCount(); ++i)
-		{
-			HumanoidComponent& humanoid = scene.humanoids[i];
-
-			Entity bone = humanoid.bones[size_t(HumanoidComponent::HumanoidBone::Head)];
-			const TransformComponent* transform = scene.transforms.GetComponent(bone);
-			if (transform != nullptr)
-			{
-				float dist = wi::math::Distance(transform->GetPosition(), ray.origin);
-				dist = std::min(1.0f, dist);
-				XMStoreFloat3(&humanoid.lookAt, camera.GetEye() + XMLoadFloat3(&ray.direction) * dist); // look at near plane position
-			}
-		}
-	}
-}
 void HumanoidWindow::ResizeLayout()
 {
 	wi::gui::Window::ResizeLayout();
@@ -549,9 +553,36 @@ void HumanoidWindow::ResizeLayout()
 	add(eyeRotMaxYSlider);
 	add(eyeRotSpeedSlider);
 	add(headSizeSlider);
+	add(ragdollFatnessSlider);
+	add(ragdollHeadSizeSlider);
 
 	y += jump;
 
 	add_fullwidth(boneList);
 
+}
+
+void HumanoidWindow::UpdateHumanoids()
+{
+	// Update humanoids to look at mouse:
+	if (lookatMouseCheckBox.GetCheck())
+	{
+		Scene& scene = editor->GetCurrentScene();
+		const CameraComponent& camera = editor->GetCurrentEditorScene().camera;
+		wi::primitive::Ray ray = editor->pickRay;
+
+		for (size_t i = 0; i < scene.humanoids.GetCount(); ++i)
+		{
+			HumanoidComponent& humanoid = scene.humanoids[i];
+
+			Entity bone = humanoid.bones[size_t(HumanoidComponent::HumanoidBone::Head)];
+			const TransformComponent* transform = scene.transforms.GetComponent(bone);
+			if (transform != nullptr)
+			{
+				float dist = wi::math::Distance(transform->GetPosition(), ray.origin);
+				dist = std::min(1.0f, dist);
+				XMStoreFloat3(&humanoid.lookAt, camera.GetEye() + XMLoadFloat3(&ray.direction) * dist); // look at near plane position
+			}
+		}
+	}
 }

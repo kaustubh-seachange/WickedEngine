@@ -50,6 +50,13 @@ namespace wi
 		initialized = true;
 
 		wi::initializer::InitializeComponentsAsync();
+
+		alwaysactive = wi::arguments::HasArgument("alwaysactive");
+
+		// Note: lua is always initialized immediately on main thread by wi::initializer, so this is safe to do:
+		assert(wi::initializer::IsInitializeFinished(wi::initializer::INITIALIZED_SYSTEM_LUA));
+		Luna<wi::lua::Application_BindLua>::push_global(wi::lua::GetLuaState(), "main", this);
+		Luna<wi::lua::Application_BindLua>::push_global(wi::lua::GetLuaState(), "application", this);
 	}
 
 	void Application::ActivatePath(RenderPath* component, float fadeSeconds, wi::Color fadeColor)
@@ -60,7 +67,6 @@ namespace wi
 		}
 
 		// Fade manager will activate on fadeout
-		fadeManager.Clear();
 		fadeManager.Start(fadeSeconds, fadeColor, [this, component]() {
 
 			if (GetActivePath() != nullptr)
@@ -109,28 +115,10 @@ namespace wi
 			return;
 		}
 
-#if 0
-#ifdef WICKEDENGINE_BUILD_DX12
-		static bool startup_workaround = false;
-		if (!startup_workaround)
-		{
-			startup_workaround = true;
-			if (dynamic_cast<GraphicsDevice_DX12*>(graphicsDevice.get()))
-			{
-				CommandList cmd = graphicsDevice->BeginCommandList();
-				wi::renderer::Workaround(1, cmd);
-				graphicsDevice->SubmitCommandLists();
-			}
-		}
-#endif // WICKEDENGINE_BUILD_DX12
-#endif
-
 		static bool startup_script = false;
 		if (!startup_script)
 		{
 			startup_script = true;
-			Luna<wi::lua::Application_BindLua>::push_global(wi::lua::GetLuaState(), "main", this);
-			Luna<wi::lua::Application_BindLua>::push_global(wi::lua::GetLuaState(), "application", this);
 			std::string startup_lua_filename = wi::helper::GetCurrentPath() + "/startup.lua";
 			if (wi::helper::FileExists(startup_lua_filename))
 			{
@@ -149,7 +137,7 @@ namespace wi
 			}
 		}
 
-		if (!is_window_active && !wi::arguments::HasArgument("alwaysactive"))
+		if (!is_window_active && !alwaysactive)
 		{
 			// If the application is not active, disable Update loops:
 			deltaTimeAccumulator = 0;
@@ -273,10 +261,14 @@ namespace wi
 	{
 		auto range = wi::profiler::BeginRangeCPU("Update");
 
+		infoDisplay.rect = {};
+
 		wi::lua::SetDeltaTime(double(dt));
 		wi::lua::Update();
 
 		wi::backlog::Update(canvas, dt);
+
+		wi::resourcemanager::UpdateStreamingResources(dt);
 
 		if (GetActivePath() != nullptr)
 		{
@@ -328,12 +320,17 @@ namespace wi
 			fx.enableFullScreen();
 			fx.color = fadeManager.color;
 			fx.opacity = fadeManager.opacity;
-			wi::image::Draw(wi::texturehelper::getWhite(), fx, cmd);
+			wi::image::Draw(nullptr, fx, cmd);
 		}
 
 		// Draw the information display
 		if (infoDisplay.active)
 		{
+			if (infoDisplay.rect.right > 0)
+			{
+				graphicsDevice->BindScissorRects(1, &infoDisplay.rect, cmd);
+			}
+
 			infodisplay_str.clear();
 			if (infoDisplay.watermark)
 			{
@@ -348,10 +345,6 @@ namespace wi
 #elif defined(_WIN32)
 				infodisplay_str += "[32-bit]";
 #endif // _ARM
-
-#ifdef PLATFORM_UWP
-				infodisplay_str += "[UWP]";
-#endif // PLATFORM_UWP
 
 #ifdef WICKEDENGINE_BUILD_DX12
 				if (dynamic_cast<GraphicsDevice_DX12*>(graphicsDevice.get()))
@@ -462,8 +455,8 @@ namespace wi
 			}
 
 			wi::font::Params params = wi::font::Params(
-				4,
-				4,
+				4 + canvas.PhysicalToLogical((uint32_t)infoDisplay.rect.left),
+				4 + canvas.PhysicalToLogical((uint32_t)infoDisplay.rect.top),
 				infoDisplay.size,
 				wi::font::WIFALIGN_LEFT,
 				wi::font::WIFALIGN_TOP,
@@ -522,15 +515,35 @@ namespace wi
 			{
 				params.cursor = wi::font::Draw(std::to_string(wi::renderer::GetShaderErrorCount()) + " shader compilation errors! Check the backlog for more information!\n", params, cmd);
 			}
-
+			if (wi::backlog::GetUnseenLogLevelMax() >= wi::backlog::LogLevel::Error)
+			{
+				params.cursor = wi::font::Draw("Errors found, check the backlog for more information!", params, cmd);
+			}
 
 			if (infoDisplay.colorgrading_helper)
 			{
-				wi::image::Draw(wi::texturehelper::getColorGradeDefault(), wi::image::Params(0, 0, 256.0f / canvas.GetDPIScaling(), 16.0f / canvas.GetDPIScaling()), cmd);
+				wi::image::Draw(
+					wi::texturehelper::getColorGradeDefault(),
+					wi::image::Params(
+						canvas.PhysicalToLogical((uint32_t)infoDisplay.rect.left),
+						canvas.PhysicalToLogical((uint32_t)infoDisplay.rect.top),
+						canvas.PhysicalToLogical(256),
+						canvas.PhysicalToLogical(16)
+					),
+					cmd
+				);
+			}
+
+			if (infoDisplay.rect.right > 0)
+			{
+				Rect rect;
+				rect.right = canvas.width;
+				rect.bottom = canvas.height;
+				graphicsDevice->BindScissorRects(1, &rect, cmd);
 			}
 		}
 
-		wi::profiler::DrawData(canvas, 4, 120, cmd, colorspace);
+		wi::profiler::DrawData(canvas, 4, 10, cmd, colorspace);
 
 		wi::backlog::Draw(canvas, cmd, colorspace);
 
@@ -620,6 +633,7 @@ namespace wi
 		}
 		wi::graphics::GetDevice() = graphicsDevice.get();
 
+		rendertarget = {};
 		canvas.init(window);
 
 		SwapChainDesc desc;

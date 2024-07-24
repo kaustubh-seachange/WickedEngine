@@ -53,11 +53,6 @@ namespace dx12_internal
 	static PFN_D3D12_CREATE_VERSIONED_ROOT_SIGNATURE_DESERIALIZER D3D12CreateVersionedRootSignatureDeserializer = nullptr;
 #endif // PLATFORM_WINDOWS_DESKTOP
 
-#ifdef PLATFORM_UWP
-#pragma comment(lib,"d3d12.lib")
-#pragma comment(lib,"dxgi.lib")
-#endif // PLATFORM_UWP
-
 	// Engine -> Native converters
 	constexpr uint32_t _ParseColorWriteMask(ColorWrite value)
 	{
@@ -1290,9 +1285,7 @@ namespace dx12_internal
 					// bindless free:
 					if (index >= 0)
 					{
-						allocationhandler->destroylocker.lock();
 						allocationhandler->destroyer_bindless_res.push_back(std::make_pair(index, allocationhandler->framecount));
-						allocationhandler->destroylocker.unlock();
 					}
 					break;
 				case D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER:
@@ -1301,9 +1294,7 @@ namespace dx12_internal
 					// bindless free:
 					if (index >= 0)
 					{
-						allocationhandler->destroylocker.lock();
 						allocationhandler->destroyer_bindless_sam.push_back(std::make_pair(index, allocationhandler->framecount));
-						allocationhandler->destroylocker.unlock();
 					}
 					break;
 				case D3D12_DESCRIPTOR_HEAP_TYPE_RTV:
@@ -1318,6 +1309,9 @@ namespace dx12_internal
 					break;
 				}
 			}
+			handle = {};
+			index = -1;
+			type = {};
 		}
 
 		// These will allow to use D3D12CalcSubresource() and loop over D3D12 subresource indices which the descriptor includes:
@@ -1346,24 +1340,30 @@ namespace dx12_internal
 		wi::vector<UINT> numRows;
 		SparseTextureProperties sparse_texture_properties;
 
-		virtual ~Resource_DX12()
+		void destroy_subresources()
 		{
-			allocationhandler->destroylocker.lock();
-			uint64_t framecount = allocationhandler->framecount;
-			if (allocation) allocationhandler->destroyer_allocations.push_back(std::make_pair(allocation, framecount));
-			if (resource) allocationhandler->destroyer_resources.push_back(std::make_pair(resource, framecount));
-			allocationhandler->destroylocker.unlock();
-
 			srv.destroy();
 			uav.destroy();
 			for (auto& x : subresources_srv)
 			{
 				x.destroy();
 			}
+			subresources_srv.clear();
 			for (auto& x : subresources_uav)
 			{
 				x.destroy();
 			}
+			subresources_uav.clear();
+		}
+
+		virtual ~Resource_DX12()
+		{
+			allocationhandler->destroylocker.lock();
+			uint64_t framecount = allocationhandler->framecount;
+			if (allocation) allocationhandler->destroyer_allocations.push_back(std::make_pair(allocation, framecount));
+			if (resource) allocationhandler->destroyer_resources.push_back(std::make_pair(resource, framecount));
+			destroy_subresources();
+			allocationhandler->destroylocker.unlock();
 		}
 	};
 	struct Texture_DX12 : public Resource_DX12
@@ -1610,7 +1610,38 @@ namespace dx12_internal
 }
 using namespace dx12_internal;
 
-	
+#ifdef PLATFORM_XBOX
+std::mutex queue_locker;
+#endif // PLATFORM_XBOX
+
+	void GraphicsDevice_DX12::CommandQueue::signal(const Semaphore& semaphore)
+	{
+		if (queue == nullptr)
+			return;
+		HRESULT hr = queue->Signal(semaphore.fence.Get(), semaphore.fenceValue);
+		assert(SUCCEEDED(hr));
+	}
+	void GraphicsDevice_DX12::CommandQueue::wait(const Semaphore& semaphore)
+	{
+		if (queue == nullptr)
+			return;
+		HRESULT hr = queue->Wait(semaphore.fence.Get(), semaphore.fenceValue);
+		assert(SUCCEEDED(hr));
+	}
+	void GraphicsDevice_DX12::CommandQueue::submit()
+	{
+		if (queue == nullptr)
+			return;
+		if (submit_cmds.empty())
+			return;
+
+		queue->ExecuteCommandLists(
+			(UINT)submit_cmds.size(),
+			submit_cmds.data()
+		);
+
+		submit_cmds.clear();
+	}
 
 	void GraphicsDevice_DX12::CopyAllocator::init(GraphicsDevice_DX12* device)
 	{
@@ -2461,15 +2492,6 @@ using namespace dx12_internal;
 			}
 			hr = queues[QUEUE_GRAPHICS].queue->SetName(L"QUEUE_GRAPHICS");
 			assert(SUCCEEDED(hr));
-			hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, PPV_ARGS(queues[QUEUE_GRAPHICS].fence));
-			assert(SUCCEEDED(hr));
-			if (FAILED(hr))
-			{
-				std::stringstream ss("");
-				ss << "ID3D12Device::CreateFence[QUEUE_GRAPHICS] failed! ERROR: 0x" << std::hex << hr;
-				wi::helper::messageBox(ss.str(), "Error!");
-				wi::platform::Exit();
-			}
 		}
 
 		{
@@ -2488,15 +2510,6 @@ using namespace dx12_internal;
 			}
 			hr = queues[QUEUE_COMPUTE].queue->SetName(L"QUEUE_COMPUTE");
 			assert(SUCCEEDED(hr));
-			hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, PPV_ARGS(queues[QUEUE_COMPUTE].fence));
-			assert(SUCCEEDED(hr));
-			if (FAILED(hr))
-			{
-				std::stringstream ss("");
-				ss << "ID3D12Device::CreateFence[QUEUE_COMPUTE] failed! ERROR: 0x" << std::hex << hr;
-				wi::helper::messageBox(ss.str(), "Error!");
-				wi::platform::Exit();
-			}
 		}
 
 		{
@@ -2515,17 +2528,7 @@ using namespace dx12_internal;
 			}
 			hr = queues[QUEUE_COPY].queue->SetName(L"QUEUE_COPY");
 			assert(SUCCEEDED(hr));
-			hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, PPV_ARGS(queues[QUEUE_COPY].fence));
-			assert(SUCCEEDED(hr));
-			if (FAILED(hr))
-			{
-				std::stringstream ss("");
-				ss << "ID3D12Device::CreateFence[QUEUE_COPY] failed! ERROR: 0x" << std::hex << hr;
-				wi::helper::messageBox(ss.str(), "Error!");
-				wi::platform::Exit();
-			}
 		}
-
 
 		if (SUCCEEDED(device.As(&video_device)))
 		{
@@ -2540,15 +2543,6 @@ using namespace dx12_internal;
 				capabilities |= GraphicsDeviceCapability::VIDEO_DECODE_H264;
 				hr = queues[QUEUE_VIDEO_DECODE].queue->SetName(L"QUEUE_VIDEO_DECODE");
 				assert(SUCCEEDED(hr));
-				hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, PPV_ARGS(queues[QUEUE_VIDEO_DECODE].fence));
-				assert(SUCCEEDED(hr));
-				if (FAILED(hr))
-				{
-					std::stringstream ss("");
-					ss << "ID3D12Device::CreateFence[QUEUE_VIDEO_DECODE] failed! ERROR: 0x" << std::hex << hr;
-					wi::helper::messageBox(ss.str(), "Error!");
-					wi::platform::Exit();
-				}
 			}
 		}
 
@@ -2839,7 +2833,7 @@ using namespace dx12_internal;
 
 		if (resource_heap_tier >= D3D12_RESOURCE_HEAP_TIER_2)
 		{
-			capabilities |= GraphicsDeviceCapability::GENERIC_SPARSE_TILE_POOL;
+			capabilities |= GraphicsDeviceCapability::ALIASING_GENERIC;
 		}
 
 		if (features.CacheCoherentUMA())
@@ -3269,7 +3263,7 @@ using namespace dx12_internal;
 		internal_state->dummyTexture.desc.height = desc->height;
 		return true;
 	}
-	bool GraphicsDevice_DX12::CreateBuffer2(const GPUBufferDesc* desc, const std::function<void(void*)>& init_callback, GPUBuffer* buffer) const
+	bool GraphicsDevice_DX12::CreateBuffer2(const GPUBufferDesc* desc, const std::function<void(void*)>& init_callback, GPUBuffer* buffer, const GPUResource* alias, uint64_t alias_offset) const
 	{
 		auto internal_state = std::make_shared<Resource_DX12>();
 		internal_state->allocationhandler = allocationhandler;
@@ -3329,31 +3323,28 @@ using namespace dx12_internal;
 		wi::graphics::xbox::ApplyBufferCreationFlags(*desc, resourceDesc.Flags, allocationDesc.ExtraHeapFlags);
 #endif // PLATFORM_XBOX
 
-		if (has_flag(desc->misc_flags, ResourceMiscFlag::SPARSE_TILE_POOL_BUFFER) ||
-			has_flag(desc->misc_flags, ResourceMiscFlag::SPARSE_TILE_POOL_TEXTURE_NON_RT_DS) ||
-			has_flag(desc->misc_flags, ResourceMiscFlag::SPARSE_TILE_POOL_TEXTURE_RT_DS))
+		if (has_flag(desc->misc_flags, ResourceMiscFlag::ALIASING_BUFFER) ||
+			has_flag(desc->misc_flags, ResourceMiscFlag::ALIASING_TEXTURE_NON_RT_DS) ||
+			has_flag(desc->misc_flags, ResourceMiscFlag::ALIASING_TEXTURE_RT_DS))
 		{
-			// Sparse tile pool must not be a committed resource because that uses implicit heap which returns nullptr,
+			// Aliasing memory pool must not be a committed resource because that uses implicit heap which returns nullptr,
 			//	thus it cannot be offsetted. This is why we create custom allocation here which will never be committed resource
 			//	(since it has no resource)
-			D3D12_RESOURCE_ALLOCATION_INFO allocationInfo = {};
-			allocationInfo.Alignment = D3D12_TILED_RESOURCE_TILE_SIZE_IN_BYTES;
-			allocationInfo.SizeInBytes = AlignTo(desc->size, (uint64_t)D3D12_TILED_RESOURCE_TILE_SIZE_IN_BYTES);
+			D3D12_RESOURCE_ALLOCATION_INFO allocationInfo = device->GetResourceAllocationInfo(0, 1, &resourceDesc);
 
 			if (resource_heap_tier >= D3D12_RESOURCE_HEAP_TIER_2)
 			{
-				// tile pool memory can be used for sparse buffers and textures alike (requires resource heap tier 2):
 				allocationDesc.ExtraHeapFlags = D3D12_HEAP_FLAG_ALLOW_ALL_BUFFERS_AND_TEXTURES;
 			}
-			else if (has_flag(desc->misc_flags, ResourceMiscFlag::SPARSE_TILE_POOL_BUFFER))
+			else if (has_flag(desc->misc_flags, ResourceMiscFlag::ALIASING_BUFFER))
 			{
 				allocationDesc.ExtraHeapFlags = D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS;
 			}
-			else if (has_flag(desc->misc_flags, ResourceMiscFlag::SPARSE_TILE_POOL_TEXTURE_NON_RT_DS))
+			else if (has_flag(desc->misc_flags, ResourceMiscFlag::ALIASING_TEXTURE_NON_RT_DS))
 			{
 				allocationDesc.ExtraHeapFlags = D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES;
 			}
-			else if (has_flag(desc->misc_flags, ResourceMiscFlag::SPARSE_TILE_POOL_TEXTURE_RT_DS))
+			else if (has_flag(desc->misc_flags, ResourceMiscFlag::ALIASING_TEXTURE_RT_DS))
 			{
 				allocationDesc.ExtraHeapFlags = D3D12_HEAP_FLAG_ALLOW_ONLY_RT_DS_TEXTURES;
 			}
@@ -3365,15 +3356,18 @@ using namespace dx12_internal;
 			);
 			assert(SUCCEEDED(hr));
 
-			hr = device->CreatePlacedResource(
-				internal_state->allocation->GetHeap(),
-				internal_state->allocation->GetOffset(),
-				&resourceDesc,
-				resourceState,
-				nullptr,
-				PPV_ARGS(internal_state->resource)
-			);
-			assert(SUCCEEDED(hr));
+			if (allocationDesc.ExtraHeapFlags == D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS || allocationDesc.ExtraHeapFlags == D3D12_HEAP_FLAG_ALLOW_ALL_BUFFERS_AND_TEXTURES)
+			{
+				hr = device->CreatePlacedResource(
+					internal_state->allocation->GetHeap(),
+					internal_state->allocation->GetOffset(),
+					&resourceDesc,
+					resourceState,
+					nullptr,
+					PPV_ARGS(internal_state->resource)
+				);
+				assert(SUCCEEDED(hr));
+			}
 		}
 		else if (has_flag(desc->misc_flags, ResourceMiscFlag::SPARSE))
 		{
@@ -3388,21 +3382,40 @@ using namespace dx12_internal;
 		}
 		else
 		{
-			hr = allocationhandler->allocator->CreateResource(
-				&allocationDesc,
-				&resourceDesc,
-				resourceState,
-				nullptr,
-				&internal_state->allocation,
-				PPV_ARGS(internal_state->resource)
-			);
+			if (alias == nullptr)
+			{
+				hr = allocationhandler->allocator->CreateResource(
+					&allocationDesc,
+					&resourceDesc,
+					resourceState,
+					nullptr,
+					&internal_state->allocation,
+					PPV_ARGS(internal_state->resource)
+				);
+			}
+			else
+			{
+				// Aliasing: https://gpuopen-librariesandsdks.github.io/D3D12MemoryAllocator/html/resource_aliasing.html
+				auto alias_internal = to_internal(alias);
+				hr = allocationhandler->allocator->CreateAliasingResource(
+					alias_internal->allocation.Get(),
+					alias_offset,
+					&resourceDesc,
+					resourceState,
+					nullptr,
+					PPV_ARGS(internal_state->resource)
+				);
+			}
 			assert(SUCCEEDED(hr));
 		}
 
 		if (!SUCCEEDED(hr))
 			return false;
 
-		internal_state->gpu_address = internal_state->resource->GetGPUVirtualAddress();
+		if (internal_state->resource != nullptr)
+		{
+			internal_state->gpu_address = internal_state->resource->GetGPUVirtualAddress();
+		}
 
 		if (desc->usage == Usage::READBACK)
 		{
@@ -3481,7 +3494,7 @@ using namespace dx12_internal;
 
 		return SUCCEEDED(hr);
 	}
-	bool GraphicsDevice_DX12::CreateTexture(const TextureDesc* desc, const SubresourceData* initial_data, Texture* texture) const
+	bool GraphicsDevice_DX12::CreateTexture(const TextureDesc* desc, const SubresourceData* initial_data, Texture* texture, const GPUResource* alias, uint64_t alias_offset) const
 	{
 		auto internal_state = std::make_shared<Texture_DX12>();
 		internal_state->allocationhandler = allocationhandler;
@@ -3534,10 +3547,11 @@ using namespace dx12_internal;
 		{
 			resourcedesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 		}
-		if (has_flag(desc->misc_flags, ResourceMiscFlag::VIDEO_DECODE))
+		if (!has_flag(desc->bind_flags, BindFlag::DEPTH_STENCIL) && resourcedesc.SampleDesc.Count <= 1)
 		{
-			// Because video queue can only transition from/to VIDEO_ and COMMON states, we will use COMMON internally and rely on implicit transition for DPB textures
-			//	(See how the resource barrier on video queue overrides any user specified state into COMMON)
+			// The copy and video queues have much stricter requirements to supported resource states, but they support
+			//	implicit promotion from COMMON state. Because user is not allowed to set resource to COMMON state, we use this flag
+			//	so textures automatically decay to COMMON state at the queue submit when they are left in a read-only state
 			resourcedesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
 		}
 
@@ -3641,7 +3655,51 @@ using namespace dx12_internal;
 		wi::graphics::xbox::ApplyTextureCreationFlags(texture->desc, resourcedesc.Flags, allocationDesc.ExtraHeapFlags);
 #endif // PLATFORM_XBOX
 
-		if (has_flag(texture->desc.misc_flags, ResourceMiscFlag::SPARSE))
+
+		if (has_flag(desc->misc_flags, ResourceMiscFlag::ALIASING_BUFFER) ||
+			has_flag(desc->misc_flags, ResourceMiscFlag::ALIASING_TEXTURE_NON_RT_DS) ||
+			has_flag(desc->misc_flags, ResourceMiscFlag::ALIASING_TEXTURE_RT_DS))
+		{
+			// Aliasing memory pool must not be a committed resource because that uses implicit heap which returns nullptr,
+			//	thus it cannot be offsetted. This is why we create custom allocation here which will never be committed resource
+			//	(since it has no resource)
+			D3D12_RESOURCE_ALLOCATION_INFO allocationInfo = device->GetResourceAllocationInfo(0, 1, &resourcedesc);
+
+			if (resource_heap_tier >= D3D12_RESOURCE_HEAP_TIER_2)
+			{
+				allocationDesc.ExtraHeapFlags = D3D12_HEAP_FLAG_ALLOW_ALL_BUFFERS_AND_TEXTURES;
+			}
+			else if (has_flag(desc->misc_flags, ResourceMiscFlag::ALIASING_BUFFER))
+			{
+				allocationDesc.ExtraHeapFlags = D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS;
+			}
+			else if (has_flag(desc->misc_flags, ResourceMiscFlag::ALIASING_TEXTURE_NON_RT_DS))
+			{
+				allocationDesc.ExtraHeapFlags = D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES;
+			}
+			else if (has_flag(desc->misc_flags, ResourceMiscFlag::ALIASING_TEXTURE_RT_DS))
+			{
+				allocationDesc.ExtraHeapFlags = D3D12_HEAP_FLAG_ALLOW_ONLY_RT_DS_TEXTURES;
+			}
+
+			hr = allocationhandler->allocator->AllocateMemory(
+				&allocationDesc,
+				&allocationInfo,
+				&internal_state->allocation
+			);
+			assert(SUCCEEDED(hr));
+
+			hr = device->CreatePlacedResource(
+				internal_state->allocation->GetHeap(),
+				internal_state->allocation->GetOffset(),
+				&resourcedesc,
+				resourceState,
+				useClearValue ? &optimizedClearValue : nullptr,
+				PPV_ARGS(internal_state->resource)
+			);
+			assert(SUCCEEDED(hr));
+		}
+		else if (has_flag(texture->desc.misc_flags, ResourceMiscFlag::SPARSE))
 		{
 			resourcedesc.Layout = D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE;
 			hr = device->CreateReservedResource(
@@ -3689,14 +3747,30 @@ using namespace dx12_internal;
 				allocationDesc.ExtraHeapFlags |= D3D12_HEAP_FLAG_SHARED;
 			}
 
-			hr = allocationhandler->allocator->CreateResource(
-				&allocationDesc,
-				&resourcedesc,
-				resourceState,
-				useClearValue ? &optimizedClearValue : nullptr,
-				&internal_state->allocation,
-				PPV_ARGS(internal_state->resource)
-			);
+			if (alias == nullptr)
+			{
+				hr = allocationhandler->allocator->CreateResource(
+					&allocationDesc,
+					&resourcedesc,
+					resourceState,
+					useClearValue ? &optimizedClearValue : nullptr,
+					&internal_state->allocation,
+					PPV_ARGS(internal_state->resource)
+				);
+			}
+			else
+			{
+				// Aliasing: https://gpuopen-librariesandsdks.github.io/D3D12MemoryAllocator/html/resource_aliasing.html
+				auto alias_internal = to_internal(alias);
+				hr = allocationhandler->allocator->CreateAliasingResource(
+					alias_internal->allocation.Get(),
+					alias_offset,
+					&resourcedesc,
+					resourceState,
+					useClearValue ? &optimizedClearValue : nullptr,
+					PPV_ARGS(internal_state->resource)
+				);
+			}
 		}
 		assert(SUCCEEDED(hr));
 
@@ -4585,7 +4659,7 @@ using namespace dx12_internal;
 		return SUCCEEDED(hr);
 	}
 
-	int GraphicsDevice_DX12::CreateSubresource(Texture* texture, SubresourceType type, uint32_t firstSlice, uint32_t sliceCount, uint32_t firstMip, uint32_t mipCount, const Format* format_change, const ImageAspect* aspect, const Swizzle* swizzle) const
+	int GraphicsDevice_DX12::CreateSubresource(Texture* texture, SubresourceType type, uint32_t firstSlice, uint32_t sliceCount, uint32_t firstMip, uint32_t mipCount, const Format* format_change, const ImageAspect* aspect, const Swizzle* swizzle, float min_lod_clamp) const
 	{
 		auto internal_state = to_internal(texture);
 
@@ -4660,12 +4734,14 @@ using namespace dx12_internal;
 							srv_desc.TextureCubeArray.NumCubes = std::min(texture->desc.array_size, sliceCount) / 6;
 							srv_desc.TextureCubeArray.MostDetailedMip = firstMip;
 							srv_desc.TextureCubeArray.MipLevels = mipCount;
+							srv_desc.TextureCubeArray.ResourceMinLODClamp = min_lod_clamp;
 						}
 						else
 						{
 							srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
 							srv_desc.TextureCube.MostDetailedMip = firstMip;
 							srv_desc.TextureCube.MipLevels = mipCount;
+							srv_desc.TextureCube.ResourceMinLODClamp = min_lod_clamp;
 						}
 					}
 					else
@@ -4684,6 +4760,7 @@ using namespace dx12_internal;
 							srv_desc.Texture2DArray.MostDetailedMip = firstMip;
 							srv_desc.Texture2DArray.MipLevels = mipCount;
 							srv_desc.Texture2DArray.PlaneSlice = plane;
+							srv_desc.Texture2DArray.ResourceMinLODClamp = min_lod_clamp;
 						}
 					}
 				}
@@ -4699,6 +4776,7 @@ using namespace dx12_internal;
 						srv_desc.Texture2D.MostDetailedMip = firstMip;
 						srv_desc.Texture2D.MipLevels = mipCount;
 						srv_desc.Texture2D.PlaneSlice = plane;
+						srv_desc.Texture2D.ResourceMinLODClamp = min_lod_clamp;
 					}
 				}
 			}
@@ -4707,6 +4785,7 @@ using namespace dx12_internal;
 				srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
 				srv_desc.Texture3D.MostDetailedMip = firstMip;
 				srv_desc.Texture3D.MipLevels = mipCount;
+				srv_desc.Texture3D.ResourceMinLODClamp = min_lod_clamp;
 			}
 
 			SingleDescriptor descriptor;
@@ -5067,6 +5146,14 @@ using namespace dx12_internal;
 		return -1;
 	}
 
+	void GraphicsDevice_DX12::DeleteSubresources(GPUResource* resource)
+	{
+		auto internal_state = to_internal(resource);
+		internal_state->allocationhandler->destroylocker.lock();
+		internal_state->destroy_subresources();
+		internal_state->allocationhandler->destroylocker.unlock();
+	}
+
 	int GraphicsDevice_DX12::GetDescriptorIndex(const GPUResource* resource, SubresourceType type, int subresource) const
 	{
 		if (resource == nullptr || !resource->IsValid())
@@ -5170,7 +5257,6 @@ using namespace dx12_internal;
 		commandlist.reset(GetBufferIndex());
 		commandlist.queue = queue;
 		commandlist.id = cmd_current;
-		commandlist.waited_on.store(false);
 
 		if (commandlist.GetCommandList() == nullptr)
 		{
@@ -5291,38 +5377,56 @@ using namespace dx12_internal;
 				assert(SUCCEEDED(hr));
 
 				CommandQueue& queue = queues[commandlist.queue];
+				const bool dependency = !commandlist.signals.empty() || !commandlist.waits.empty() || !commandlist.wait_queues.empty();
+
+				if (dependency)
+				{
+					// If the current commandlist must resolve a dependency, then previous ones will be submitted before doing that:
+					//	This improves GPU utilization because not the whole batch of command lists will need to synchronize, but only the one that handles it
+					queue.submit();
+				}
+
 				queue.submit_cmds.push_back(commandlist.GetCommandList());
 
-				if (commandlist.waited_on.load() || !commandlist.waits.empty())
+				if (dependency)
 				{
-					for (auto& wait : commandlist.waits)
+					for (auto& wait : commandlist.wait_queues)
 					{
-						// record wait for signal on a previous submit:
-						const CommandList_DX12& waitcommandlist = GetCommandList(wait);
-						hr = queue.queue->Wait(
-							queues[waitcommandlist.queue].fence.Get(),
-							FRAMECOUNT * commandlists.size() + (uint64_t)waitcommandlist.id
-						);
-						assert(SUCCEEDED(hr));
-					}
+						CommandQueue& waitqueue = queues[wait.first];
+						const Semaphore& semaphore = wait.second;
 
-					if (!queue.submit_cmds.empty())
-					{
-						queue.queue->ExecuteCommandLists(
-							(UINT)queue.submit_cmds.size(),
-							queue.submit_cmds.data()
-						);
-						queue.submit_cmds.clear();
-					}
+						// The WaitQueue operation will submit and signal the specified dependency queue:
+						waitqueue.submit();
+						waitqueue.signal(semaphore); // signals immediately after submit
 
-					if (commandlist.waited_on.load())
-					{
-						hr = queue.queue->Signal(
-							queue.fence.Get(),
-							FRAMECOUNT * commandlists.size() + (uint64_t)commandlist.id
-						);
-						assert(SUCCEEDED(hr));
+						// The current queue will be waiting for the dependency queue to complete:
+						queue.wait(semaphore);
+
+						// recycle semaphore:
+						free_semaphore(semaphore);
 					}
+					commandlist.wait_queues.clear();
+
+					for(auto& semaphore : commandlist.waits)
+					{
+						// Wait for command list dependency:
+						queue.wait(semaphore);
+
+						// semaphore is not recycled here, only the signals recycle themselves vecause wait will use the same
+					}
+					commandlist.waits.clear();
+
+					queue.submit();
+
+					for(auto& semaphore : commandlist.signals)
+					{
+						// Signal this command list's completion:
+						queue.signal(semaphore);
+
+						// recycle semaphore:
+						free_semaphore(semaphore);
+					}
+					commandlist.signals.clear();
 				}
 
 				for (auto& x : commandlist.pipelines_worker)
@@ -5345,15 +5449,10 @@ using namespace dx12_internal;
 			for (int q = 0; q < QUEUE_COUNT; ++q)
 			{
 				CommandQueue& queue = queues[q];
+				if (queue.queue == nullptr)
+					continue;
 
-				if (!queue.submit_cmds.empty())
-				{
-					queue.queue->ExecuteCommandLists(
-						(UINT)queue.submit_cmds.size(),
-						queue.submit_cmds.data()
-					);
-					queue.submit_cmds.clear();
-				}
+				queue.submit();
 
 				hr = queue.queue->Signal(frame_fence[GetBufferIndex()][q].Get(), 1);
 				assert(SUCCEEDED(hr));
@@ -5413,6 +5512,8 @@ using namespace dx12_internal;
 		const uint32_t bufferindex = GetBufferIndex();
 		for (int queue = 0; queue < QUEUE_COUNT; ++queue)
 		{
+			if (queues[queue].queue == nullptr)
+				continue;
 			if (FRAMECOUNT >= BUFFERCOUNT && frame_fence[bufferindex][queue]->GetCompletedValue() < 1)
 			{
 				// NULL event handle will simply wait immediately:
@@ -5663,6 +5764,8 @@ using namespace dx12_internal;
 
 		for (auto& queue : queues)
 		{
+			if (queue.queue == nullptr)
+				continue;
 			hr = queue.queue->Signal(fence.Get(), 1);
 			assert(SUCCEEDED(hr));
 			if (fence->GetCompletedValue() < 1)
@@ -5850,8 +5953,14 @@ using namespace dx12_internal;
 		CommandList_DX12& commandlist = GetCommandList(cmd);
 		CommandList_DX12& commandlist_wait_for = GetCommandList(wait_for);
 		assert(commandlist_wait_for.id < commandlist.id); // can't wait for future command list!
-		commandlist.waits.push_back(wait_for);
-		commandlist_wait_for.waited_on.store(true);
+		Semaphore semaphore = new_semaphore();
+		commandlist.waits.push_back(semaphore);
+		commandlist_wait_for.signals.push_back(semaphore);
+	}
+	void GraphicsDevice_DX12::WaitQueue(CommandList cmd, QUEUE_TYPE wait_for)
+	{
+		CommandList_DX12& commandlist = GetCommandList(cmd);
+		commandlist.wait_queues.push_back(std::make_pair(wait_for, new_semaphore()));
 	}
 	void GraphicsDevice_DX12::RenderPassBegin(const SwapChain* swapchain, CommandList cmd)
 	{
@@ -7038,6 +7147,14 @@ using namespace dx12_internal;
 				}
 			}
 			break;
+			case GPUBarrier::Type::ALIASING:
+			{
+				barrierdesc.Type = D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
+				barrierdesc.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+				barrierdesc.Aliasing.pResourceBefore = to_internal(barrier.aliasing.resource_before)->resource.Get();
+				barrierdesc.Aliasing.pResourceAfter = to_internal(barrier.aliasing.resource_after)->resource.Get();
+			}
+			break;
 			}
 
 			if (barrierdesc.Type == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION && commandlist.queue > QUEUE_GRAPHICS)
@@ -7293,24 +7410,68 @@ using namespace dx12_internal;
 	}
 	void GraphicsDevice_DX12::ClearUAV(const GPUResource* resource, uint32_t value, CommandList cmd)
 	{
-		auto internal_state = to_internal(resource);
-		// We cannot clear eg. a StructuredBuffer, so in those cases we must clear the RAW view with uav_raw
-		const SingleDescriptor& descriptor = internal_state->uav_raw.IsValid() ? internal_state->uav_raw : internal_state->uav;
-		D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle = descriptorheap_res.start_gpu;
-		gpu_handle.ptr += descriptor.index * resource_descriptor_size;
-		D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle = descriptor.handle;
-
 		const UINT values[4] = { value,value,value,value };
 
-		CommandList_DX12& commandlist = GetCommandList(cmd);
-		commandlist.GetGraphicsCommandList()->ClearUnorderedAccessViewUint(
-			gpu_handle,
-			cpu_handle,
-			internal_state->resource.Get(),
-			values,
-			0,
-			nullptr
-		);
+		auto internal_state = to_internal(resource);
+		if (internal_state->uav_raw.IsValid())
+		{
+			// We cannot clear eg. a StructuredBuffer, so in those cases we must clear the RAW view with uav_raw
+			const SingleDescriptor& descriptor = internal_state->uav_raw;
+			D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle = descriptorheap_res.start_gpu;
+			gpu_handle.ptr += descriptor.index * resource_descriptor_size;
+			D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle = descriptor.handle;
+
+			CommandList_DX12& commandlist = GetCommandList(cmd);
+			commandlist.GetGraphicsCommandList()->ClearUnorderedAccessViewUint(
+				gpu_handle,
+				cpu_handle,
+				internal_state->resource.Get(),
+				values,
+				0,
+				nullptr
+			);
+		}
+		else
+		{
+			if (internal_state->subresources_uav.empty())
+			{
+				const SingleDescriptor& descriptor = internal_state->uav;
+				D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle = descriptorheap_res.start_gpu;
+				gpu_handle.ptr += descriptor.index * resource_descriptor_size;
+				D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle = descriptor.handle;
+
+				CommandList_DX12& commandlist = GetCommandList(cmd);
+				commandlist.GetGraphicsCommandList()->ClearUnorderedAccessViewUint(
+					gpu_handle,
+					cpu_handle,
+					internal_state->resource.Get(),
+					values,
+					0,
+					nullptr
+				);
+			}
+			else
+			{
+				// This is clearing every subresource (for example every mip since they can't be referenced by single UAV)
+				for (auto& uav : internal_state->subresources_uav)
+				{
+					const SingleDescriptor& descriptor = uav;
+					D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle = descriptorheap_res.start_gpu;
+					gpu_handle.ptr += descriptor.index * resource_descriptor_size;
+					D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle = descriptor.handle;
+
+					CommandList_DX12& commandlist = GetCommandList(cmd);
+					commandlist.GetGraphicsCommandList()->ClearUnorderedAccessViewUint(
+						gpu_handle,
+						cpu_handle,
+						internal_state->resource.Get(),
+						values,
+						0,
+						nullptr
+					);
+				}
+			}
+		}
 	}
 	void GraphicsDevice_DX12::VideoDecode(const VideoDecoder* video_decoder, const VideoDecodeOperation* op, CommandList cmd)
 	{

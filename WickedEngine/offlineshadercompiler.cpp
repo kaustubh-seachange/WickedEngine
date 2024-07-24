@@ -67,17 +67,20 @@ wi::vector<ShaderEntry> shaders = {
 	{"ffx-fsr2/ffx_fsr2_accumulate_pass", wi::graphics::ShaderStage::CS},
 	{"ffx-fsr2/ffx_fsr2_rcas_pass", wi::graphics::ShaderStage::CS},
 	{"ssaoCS", wi::graphics::ShaderStage::CS},
+	{"ssgi_deinterleaveCS", wi::graphics::ShaderStage::CS},
+	{"ssgiCS", wi::graphics::ShaderStage::CS},
+	{"ssgi_upsampleCS", wi::graphics::ShaderStage::CS},
 	{"rtdiffuseCS", wi::graphics::ShaderStage::CS, wi::graphics::ShaderModel::SM_6_5},
 	{"rtdiffuse_spatialCS", wi::graphics::ShaderStage::CS},
 	{"rtdiffuse_temporalCS", wi::graphics::ShaderStage::CS},
-	{"rtdiffuse_bilateralCS", wi::graphics::ShaderStage::CS},
+	{"rtdiffuse_upsampleCS", wi::graphics::ShaderStage::CS},
 	{"rtreflectionCS", wi::graphics::ShaderStage::CS, wi::graphics::ShaderModel::SM_6_5},
 	{"ssr_tileMaxRoughness_horizontalCS", wi::graphics::ShaderStage::CS},
 	{"ssr_tileMaxRoughness_verticalCS", wi::graphics::ShaderStage::CS},
 	{"ssr_depthHierarchyCS", wi::graphics::ShaderStage::CS},
 	{"ssr_resolveCS", wi::graphics::ShaderStage::CS},
 	{"ssr_temporalCS", wi::graphics::ShaderStage::CS},
-	{"ssr_bilateralCS", wi::graphics::ShaderStage::CS},
+	{"ssr_upsampleCS", wi::graphics::ShaderStage::CS},
 	{"ssr_raytraceCS", wi::graphics::ShaderStage::CS},
 	{"ssr_raytraceCS_cheap", wi::graphics::ShaderStage::CS},
 	{"ssr_raytraceCS_earlyexit", wi::graphics::ShaderStage::CS},
@@ -134,6 +137,7 @@ wi::vector<ShaderEntry> shaders = {
 	{"emittedparticle_emitCS_volume", wi::graphics::ShaderStage::CS},
 	{"emittedparticle_finishUpdateCS", wi::graphics::ShaderStage::CS},
 	{"downsample4xCS", wi::graphics::ShaderStage::CS},
+	{"lineardepthCS", wi::graphics::ShaderStage::CS},
 	{"depthoffield_prepassCS_earlyexit", wi::graphics::ShaderStage::CS},
 	{"depthoffield_mainCS_cheap", wi::graphics::ShaderStage::CS},
 	{"depthoffield_mainCS_earlyexit", wi::graphics::ShaderStage::CS },
@@ -187,12 +191,12 @@ wi::vector<ShaderEntry> shaders = {
 	{"skyAtmosphere_skyViewLutCS", wi::graphics::ShaderStage::CS },
 	{"skyAtmosphere_multiScatteredLuminanceLutCS", wi::graphics::ShaderStage::CS },
 	{"skyAtmosphere_skyLuminanceLutCS", wi::graphics::ShaderStage::CS },
-	{"upsample_bilateral_uint4CS", wi::graphics::ShaderStage::CS },
 	{"screenspaceshadowCS", wi::graphics::ShaderStage::CS },
 	{"rtshadowCS", wi::graphics::ShaderStage::CS, wi::graphics::ShaderModel::SM_6_5 },
 	{"rtshadow_denoise_tileclassificationCS", wi::graphics::ShaderStage::CS },
 	{"rtshadow_denoise_filterCS", wi::graphics::ShaderStage::CS },
 	{"rtshadow_denoise_temporalCS", wi::graphics::ShaderStage::CS },
+	{"rtshadow_upsampleCS", wi::graphics::ShaderStage::CS },
 	{"rtaoCS", wi::graphics::ShaderStage::CS, wi::graphics::ShaderModel::SM_6_5 },
 	{"rtao_denoise_tileclassificationCS", wi::graphics::ShaderStage::CS },
 	{"rtao_denoise_filterCS", wi::graphics::ShaderStage::CS },
@@ -208,6 +212,8 @@ wi::vector<ShaderEntry> shaders = {
 	{"surfel_raytraceCS_rtapi", wi::graphics::ShaderStage::CS, wi::graphics::ShaderModel::SM_6_5 },
 	{"surfel_raytraceCS", wi::graphics::ShaderStage::CS },
 	{"surfel_integrateCS", wi::graphics::ShaderStage::CS },
+	{"ddgi_rayallocationCS", wi::graphics::ShaderStage::CS },
+	{"ddgi_indirectprepareCS", wi::graphics::ShaderStage::CS },
 	{"ddgi_raytraceCS", wi::graphics::ShaderStage::CS },
 	{"ddgi_raytraceCS_rtapi", wi::graphics::ShaderStage::CS, wi::graphics::ShaderModel::SM_6_5 },
 	{"ddgi_updateCS", wi::graphics::ShaderStage::CS },
@@ -215,6 +221,7 @@ wi::vector<ShaderEntry> shaders = {
 	{"terrainVirtualTextureUpdateCS", wi::graphics::ShaderStage::CS },
 	{"terrainVirtualTextureUpdateCS_normalmap", wi::graphics::ShaderStage::CS },
 	{"terrainVirtualTextureUpdateCS_surfacemap", wi::graphics::ShaderStage::CS },
+	{"terrainVirtualTextureUpdateCS_emissivemap", wi::graphics::ShaderStage::CS },
 	{"meshlet_prepareCS", wi::graphics::ShaderStage::CS },
 	{"impostor_prepareCS", wi::graphics::ShaderStage::CS },
 	{"virtualTextureTileRequestsCS", wi::graphics::ShaderStage::CS },
@@ -222,6 +229,8 @@ wi::vector<ShaderEntry> shaders = {
 	{"virtualTextureResidencyUpdateCS", wi::graphics::ShaderStage::CS },
 	{"windCS", wi::graphics::ShaderStage::CS },
 	{"yuv_to_rgbCS", wi::graphics::ShaderStage::CS },
+	{"wetmap_updateCS", wi::graphics::ShaderStage::CS },
+	{"causticsCS", wi::graphics::ShaderStage::CS },
 
 
 	{"emittedparticlePS_soft", wi::graphics::ShaderStage::PS },
@@ -231,6 +240,7 @@ wi::vector<ShaderEntry> shaders = {
 	{"hairparticlePS", wi::graphics::ShaderStage::PS },
 	{"hairparticlePS_simple", wi::graphics::ShaderStage::PS },
 	{"hairparticlePS_prepass", wi::graphics::ShaderStage::PS },
+	{"hairparticlePS_prepass_depthonly", wi::graphics::ShaderStage::PS },
 	{"hairparticlePS_shadow", wi::graphics::ShaderStage::PS },
 	{"volumetricLight_SpotPS", wi::graphics::ShaderStage::PS },
 	{"volumetricLight_PointPS", wi::graphics::ShaderStage::PS },
@@ -256,11 +266,14 @@ wi::vector<ShaderEntry> shaders = {
 	{"objectPS_debug", wi::graphics::ShaderStage::PS },
 	{"objectPS_prepass", wi::graphics::ShaderStage::PS },
 	{"objectPS_prepass_alphatest", wi::graphics::ShaderStage::PS },
+	{"objectPS_prepass_depthonly", wi::graphics::ShaderStage::PS },
+	{"objectPS_prepass_depthonly_alphatest", wi::graphics::ShaderStage::PS },
 	{"lightVisualizerPS", wi::graphics::ShaderStage::PS },
 	{"lensFlarePS", wi::graphics::ShaderStage::PS },
 	{"impostorPS", wi::graphics::ShaderStage::PS },
 	{"impostorPS_simple", wi::graphics::ShaderStage::PS },
 	{"impostorPS_prepass", wi::graphics::ShaderStage::PS },
+	{"impostorPS_prepass_depthonly", wi::graphics::ShaderStage::PS },
 	{"forceFieldVisualizerPS", wi::graphics::ShaderStage::PS },
 	{"fontPS", wi::graphics::ShaderStage::PS },
 	{"envMap_skyPS_static", wi::graphics::ShaderStage::PS },
@@ -275,6 +288,7 @@ wi::vector<ShaderEntry> shaders = {
 	{"ddgi_debugPS", wi::graphics::ShaderStage::PS },
 	{"copyDepthPS", wi::graphics::ShaderStage::PS },
 	{"copyStencilBitPS", wi::graphics::ShaderStage::PS },
+	{"trailPS", wi::graphics::ShaderStage::PS },
 
 
 	{"hairparticleVS", wi::graphics::ShaderStage::VS },
@@ -330,6 +344,7 @@ wi::vector<ShaderEntry> shaders = {
 	{"shadowVS_transparent", wi::graphics::ShaderStage::VS },
 	{"shadowVS_transparent_emulation", wi::graphics::ShaderStage::VS },
 	{"screenVS", wi::graphics::ShaderStage::VS },
+	{"trailVS", wi::graphics::ShaderStage::VS },
 
 
 
@@ -476,6 +491,13 @@ int main(int argc, char* argv[])
 	{
 		shaders.back().permutations.emplace_back().defines = x;
 	}
+
+	// permutations for ssgiCS:
+	shaders.push_back({ "ssgiCS", wi::graphics::ShaderStage::CS });
+	shaders.back().permutations.emplace_back().defines = { "WIDE" };
+	// permutations for ssgi_upsampleCS:
+	shaders.push_back({ "ssgi_upsampleCS", wi::graphics::ShaderStage::CS });
+	shaders.back().permutations.emplace_back().defines = { "WIDE" };
 
 	wi::jobsystem::Initialize();
 	wi::jobsystem::context ctx;

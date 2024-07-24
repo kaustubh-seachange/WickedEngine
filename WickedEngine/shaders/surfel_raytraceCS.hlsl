@@ -12,6 +12,7 @@ StructuredBuffer<SurfelGridCell> surfelGridBuffer : register(t2);
 StructuredBuffer<uint> surfelCellBuffer : register(t3);
 StructuredBuffer<uint> surfelAliveBuffer : register(t4);
 Texture2D<float2> surfelMomentsTexturePrev : register(t5);
+Texture2D<float4> surfelIrradianceTexture : register(t6);
 
 RWStructuredBuffer<SurfelRayDataPacked> surfelRayBuffer : register(u0);
 
@@ -94,10 +95,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			prim.instanceIndex = q.CommittedInstanceID();
 			prim.subsetIndex = q.CommittedGeometryIndex();
 
-			if (!q.CommittedTriangleFrontFace())
-			{
-				surface.flags |= SURFACE_FLAG_BACKFACE;
-			}
+			surface.SetBackface(!q.CommittedTriangleFrontFace());
 			if(!surface.load(prim, q.CommittedTriangleBarycentrics()))
 				return;
 
@@ -107,10 +105,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			ray.Origin = ray.Origin + ray.Direction * hit.distance;
 			hit_depth = hit.distance;
 
-			if (hit.is_backface)
-			{
-				surface.flags |= SURFACE_FLAG_BACKFACE;
-			}
+			surface.SetBackface(hit.is_backface);
 
 			if (!surface.load(hit.primitiveID, hit.bary))
 				return;
@@ -182,7 +177,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 							const float3 lightColor = light.GetColor().rgb;
 
 							lighting.direct.diffuse = lightColor;
-							lighting.direct.diffuse *= attenuation_pointlight(dist, dist2, range, range2);
+							lighting.direct.diffuse *= attenuation_pointlight(dist2, range, range2);
 						}
 					}
 				}
@@ -215,7 +210,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 								const float3 lightColor = light.GetColor().rgb;
 
 								lighting.direct.diffuse = lightColor;
-								lighting.direct.diffuse *= attenuation_spotlight(dist, dist2, range, range2, spot_factor, light.GetAngleScale(), light.GetAngleOffset());
+								lighting.direct.diffuse *= attenuation_spotlight(dist2, range, range2, spot_factor, light.GetAngleScale(), light.GetAngleOffset());
 							}
 						}
 					}
@@ -282,11 +277,11 @@ void main(uint3 DTid : SV_DispatchThreadID)
 							contribution *= saturate(dotN);
 							contribution *= saturate(1 - dist / surfel.GetRadius());
 							contribution = smoothstep(0, 1, contribution);
-
+							
 							float2 moments = surfelMomentsTexturePrev.SampleLevel(sampler_linear_clamp, surfel_moment_uv(surfel_index, normal, L / dist), 0);
 							contribution *= surfel_moment_weight(moments, dist);
 
-							surfel_gi += float4(surfel.color, 1) * contribution;
+							surfel_gi += surfelIrradianceTexture.SampleLevel(sampler_linear_clamp, surfel_moment_uv(surfel_index, normal, surface.N), 0) * contribution;
 
 						}
 					}

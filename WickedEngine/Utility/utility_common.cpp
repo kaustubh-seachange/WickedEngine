@@ -15,17 +15,17 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
-#define TINYDDSLOADER_IMPLEMENTATION
-#include "tinyddsloader.h"
-
 #define QOI_IMPLEMENTATION
 #include "qoi.h"
 
 #define MINIMP4_IMPLEMENTATION
 #include "minimp4.h"
+#undef RETURN_ERROR
 
 #define H264_IMPLEMENTATION
 #include "h264.h"
+
+#include "mikktspace.c"
 
 
 // Basis Universal library sources are compiled below for simplicity:

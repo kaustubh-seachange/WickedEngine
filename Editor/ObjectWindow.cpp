@@ -257,7 +257,7 @@ void ObjectWindow::Create(EditorComponent* _editor)
 	editor = _editor;
 
 	wi::gui::Window::Create(ICON_OBJECT " Object", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE);
-	SetSize(XMFLOAT2(670, 740));
+	SetSize(XMFLOAT2(670, 880));
 
 	closeButton.SetTooltip("Delete ObjectComponent");
 	OnClose([=](wi::gui::EventArgs args) {
@@ -270,7 +270,7 @@ void ObjectWindow::Create(EditorComponent* _editor)
 
 		editor->RecordEntity(archive, entity);
 
-		editor->optionsWnd.RefreshEntityTree();
+		editor->componentsWnd.RefreshEntityTree();
 		});
 
 	float x = 140;
@@ -418,6 +418,24 @@ void ObjectWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&notVisibleInReflectionsCheckBox);
 
+	wetmapCheckBox.Create("Wet map: ");
+	wetmapCheckBox.SetTooltip("If wetmap is enabled, wetness will be automatically tracked by graphics systems.");
+	wetmapCheckBox.SetSize(XMFLOAT2(hei, hei));
+	wetmapCheckBox.SetPos(XMFLOAT2(x, y += step));
+	wetmapCheckBox.SetCheck(true);
+	wetmapCheckBox.OnClick([&](wi::gui::EventArgs args) {
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
+		{
+			ObjectComponent* object = scene.objects.GetComponent(x.entity);
+			if (object != nullptr)
+			{
+				object->SetWetmapEnabled(args.bValue);
+			}
+		}
+		});
+	AddWidget(&wetmapCheckBox);
+
 	ditherSlider.Create(0, 1, 0, 1000, "Transparency: ");
 	ditherSlider.SetTooltip("Adjust transparency of the object. Opaque materials will use dithered transparency in this case!");
 	ditherSlider.SetSize(XMFLOAT2(wid, hei));
@@ -430,6 +448,19 @@ void ObjectWindow::Create(EditorComponent* _editor)
 		}
 	});
 	AddWidget(&ditherSlider);
+
+	alphaRefSlider.Create(0, 1, 0, 1000, "Alpha Ref: ");
+	alphaRefSlider.SetTooltip("Adjust alpha ref per instance.\nThis is an additional value on top of material's alpha ref, used for alpha testing (alpha cutout).");
+	alphaRefSlider.SetSize(XMFLOAT2(wid, hei));
+	alphaRefSlider.SetPos(XMFLOAT2(x, y += step));
+	alphaRefSlider.OnSlide([&](wi::gui::EventArgs args) {
+		ObjectComponent* object = editor->GetCurrentScene().objects.GetComponent(entity);
+		if (object != nullptr)
+		{
+			object->alphaRef = args.fValue;
+		}
+		});
+	AddWidget(&alphaRefSlider);
 
 	cascadeMaskSlider.Create(0, 3, 0, 3, "Cascade Mask: ");
 	cascadeMaskSlider.SetTooltip("How many shadow cascades to skip when rendering this object into shadow maps? (0: skip none, it will be in all cascades, 1: skip first (biggest cascade), ...etc...");
@@ -648,6 +679,216 @@ void ObjectWindow::Create(EditorComponent* _editor)
 	});
 	AddWidget(&clearLightmapButton);
 
+
+	y += step;
+
+	vertexAOButton.Create("Vertex AO");
+	vertexAOButton.SetTooltip("Create or delete per vertex Ambient Occlusion.");
+	vertexAOButton.SetPos(XMFLOAT2(x, y += step));
+	vertexAOButton.SetSize(XMFLOAT2(wid, hei));
+	vertexAOButton.SetLocalizationEnabled(false);
+	vertexAOButton.OnClick([&](wi::gui::EventArgs args) {
+		const Scene& scene = editor->GetCurrentScene();
+
+		// Build BVHs for everything selected:
+		if (!deleteAOMode)
+		{
+			wi::Timer timer;
+			for (auto& x : this->editor->translator.selected)
+			{
+				ObjectComponent* objectcomponent = scene.objects.GetComponent(x.entity);
+				if (objectcomponent != nullptr)
+				{
+					const size_t objectcomponentIndex = scene.objects.GetIndex(x.entity);
+					MeshComponent* meshcomponent = scene.meshes.GetComponent(objectcomponent->meshID);
+					if (meshcomponent == nullptr)
+						continue;
+					if (!meshcomponent->bvh.IsValid())
+					{
+						meshcomponent->BuildBVH();
+					}
+				}
+			}
+			wi::backlog::post("Building BVHs for vertex AO took " + wi::helper::GetTimerDurationText((float)timer.elapsed_seconds()));
+		}
+
+		for (auto& x : this->editor->translator.selected)
+		{
+			ObjectComponent* objectcomponent = scene.objects.GetComponent(x.entity);
+			if (objectcomponent != nullptr)
+			{
+				if (deleteAOMode)
+				{
+					objectcomponent->vertex_ao.clear();
+				}
+				else
+				{
+					const MeshComponent* meshcomponent = scene.meshes.GetComponent(objectcomponent->meshID);
+					if (meshcomponent == nullptr)
+						continue;
+					if (meshcomponent->vertex_normals.size() != meshcomponent->vertex_positions.size())
+						continue;
+					wi::Timer timer;
+					using namespace wi::primitive;
+					objectcomponent->vertex_ao.resize(meshcomponent->vertex_positions.size());
+					const size_t objectcomponentIndex = scene.objects.GetIndex(x.entity);
+
+					uint32_t groupSizePerCore = wi::jobsystem::DispatchGroupCount((uint32_t)objectcomponent->vertex_ao.size(), wi::jobsystem::GetThreadCount());
+
+					wi::jobsystem::context ctx;
+					wi::jobsystem::Dispatch(ctx, (uint32_t)objectcomponent->vertex_ao.size(), groupSizePerCore, [&](wi::jobsystem::JobArgs args) {
+						XMFLOAT3 position = meshcomponent->vertex_positions[args.jobIndex];
+						XMFLOAT3 normal = meshcomponent->vertex_normals[args.jobIndex];
+						const XMMATRIX W = XMLoadFloat4x4(&scene.matrix_objects[objectcomponentIndex]);
+						XMStoreFloat3(&position, XMVector3Transform(XMLoadFloat3(&position), W));
+						XMStoreFloat3(&normal, XMVector3Normalize(XMVector3TransformNormal(XMLoadFloat3(&normal), XMMatrixTranspose(XMMatrixInverse(nullptr, W)))));
+						const XMMATRIX TBN = wi::math::GetTangentSpace(normal);
+						float accum = 0;
+						const uint32_t samplecount = (uint32_t)vertexAORayCountSlider.GetValue();
+						const float raylength = vertexAORayLengthSlider.GetValue();
+						const XMVECTOR rayOrigin = XMLoadFloat3(&position);
+						for (uint32_t sam = 0; sam < samplecount; ++sam)
+						{
+							XMFLOAT2 hamm = wi::math::Hammersley2D(sam, samplecount);
+							XMFLOAT3 hemi = wi::math::HemispherePoint_Cos(hamm.x, hamm.y);
+							XMVECTOR rayDirection = XMLoadFloat3(&hemi);
+							rayDirection = XMVector3TransformNormal(rayDirection, TBN);
+							rayDirection = XMVector3Normalize(rayDirection);
+							XMStoreFloat3(&hemi, rayDirection);
+
+							wi::primitive::Ray ray(position, hemi, 0.0001f, raylength);
+
+							bool hit = false;
+							for (size_t objectIndex = 0; (objectIndex < scene.aabb_objects.size()) && !hit; ++objectIndex)
+							{
+								const AABB& aabb = scene.aabb_objects[objectIndex];
+								if (!ray.intersects(aabb))
+									continue;
+
+								const ObjectComponent& object = scene.objects[objectIndex];
+								if (object.meshID == INVALID_ENTITY)
+									continue;
+
+								const MeshComponent* mesh = scene.meshes.GetComponent(object.meshID);
+								if (mesh == nullptr)
+									continue;
+
+								const Entity entity = scene.objects.GetEntity(objectIndex);
+								const XMMATRIX objectMat = XMLoadFloat4x4(&scene.matrix_objects[objectIndex]);
+								const XMMATRIX objectMatPrev = XMLoadFloat4x4(&scene.matrix_objects_prev[objectIndex]);
+								const XMMATRIX objectMat_Inverse = XMMatrixInverse(nullptr, objectMat);
+								const XMVECTOR rayOrigin_local = XMVector3Transform(rayOrigin, objectMat_Inverse);
+								const XMVECTOR rayDirection_local = XMVector3Normalize(XMVector3TransformNormal(rayDirection, objectMat_Inverse));
+
+								auto intersect_triangle = [&](uint32_t subsetIndex, uint32_t indexOffset, uint32_t triangleIndex)
+								{
+									const uint32_t i0 = mesh->indices[indexOffset + triangleIndex * 3 + 0];
+									const uint32_t i1 = mesh->indices[indexOffset + triangleIndex * 3 + 1];
+									const uint32_t i2 = mesh->indices[indexOffset + triangleIndex * 3 + 2];
+
+									const XMVECTOR p0 = XMLoadFloat3(&mesh->vertex_positions[i0]);
+									const XMVECTOR p1 = XMLoadFloat3(&mesh->vertex_positions[i1]);
+									const XMVECTOR p2 = XMLoadFloat3(&mesh->vertex_positions[i2]);
+
+									float distance;
+									XMFLOAT2 bary;
+									if (wi::math::RayTriangleIntersects(rayOrigin_local, rayDirection_local, p0, p1, p2, distance, bary, ray.TMin, ray.TMax))
+										return true;
+									return false;
+								};
+
+								if (mesh->bvh.IsValid())
+								{
+									Ray ray_local = Ray(rayOrigin_local, rayDirection_local);
+
+									hit = mesh->bvh.IntersectsFirst(ray_local, [&](uint32_t index) {
+										const AABB& leaf = mesh->bvh_leaf_aabbs[index];
+										const uint32_t triangleIndex = leaf.layerMask;
+										const uint32_t subsetIndex = leaf.userdata;
+										const MeshComponent::MeshSubset& subset = mesh->subsets[subsetIndex];
+										if (subset.indexCount == 0)
+											return false;
+										const MaterialComponent* material = scene.materials.GetComponent(subset.materialID);
+										if (material != nullptr && material->GetBlendMode() != wi::enums::BLENDMODE_OPAQUE)
+											return false;
+										const uint32_t indexOffset = subset.indexOffset;
+										if (intersect_triangle(subsetIndex, indexOffset, triangleIndex))
+											return true;
+										return false;
+									});
+								}
+								else
+								{
+									// Brute-force intersection test:
+									uint32_t first_subset = 0;
+									uint32_t last_subset = 0;
+									mesh->GetLODSubsetRange(0, first_subset, last_subset);
+									for (uint32_t subsetIndex = first_subset; (subsetIndex < last_subset) && !hit; ++subsetIndex)
+									{
+										const MeshComponent::MeshSubset& subset = mesh->subsets[subsetIndex];
+										if (subset.indexCount == 0)
+											continue;
+										const MaterialComponent* material = scene.materials.GetComponent(subset.materialID);
+										if (material != nullptr && material->GetBlendMode() != wi::enums::BLENDMODE_OPAQUE)
+											continue;
+										const uint32_t indexOffset = subset.indexOffset;
+										const uint32_t triangleCount = subset.indexCount / 3;
+
+										for (uint32_t triangleIndex = 0; (triangleIndex < triangleCount) && !hit; ++triangleIndex)
+										{
+											hit |= intersect_triangle(subsetIndex, indexOffset, triangleIndex);
+										}
+									}
+								}
+							}
+
+							if (!hit)
+								accum += 1.0f;
+						}
+						accum /= float(samplecount);
+						objectcomponent->vertex_ao[args.jobIndex] = uint8_t(accum * 255);
+					});
+					wi::jobsystem::Wait(ctx);
+					wi::backlog::post("Vertex AO baking took " + wi::helper::GetTimerDurationText((float)timer.elapsed_seconds()));
+				}
+				objectcomponent->CreateRenderData();
+			}
+		}
+
+		// Delete BVHs that are not really needed any more:
+		for (auto& x : this->editor->translator.selected)
+		{
+			ObjectComponent* objectcomponent = scene.objects.GetComponent(x.entity);
+			if (objectcomponent != nullptr)
+			{
+				const size_t objectcomponentIndex = scene.objects.GetIndex(x.entity);
+				MeshComponent* meshcomponent = scene.meshes.GetComponent(objectcomponent->meshID);
+				if (meshcomponent == nullptr)
+					continue;
+				if (!meshcomponent->IsBVHEnabled())
+				{
+					meshcomponent->bvh = {};
+					meshcomponent->bvh_leaf_aabbs = {};
+				}
+			}
+		}
+
+		SetEntity(entity);
+		});
+	AddWidget(&vertexAOButton);
+
+	vertexAORayCountSlider.Create(8, 1024, 256, 1024 - 8, "Ray count: ");
+	vertexAORayCountSlider.SetTooltip("Set the ray count per vertex for vertex AO baking.\nThe larger this value is, the longer the baking will take, and the better the quality will get.");
+	vertexAORayCountSlider.SetSize(XMFLOAT2(wid, hei));
+	vertexAORayCountSlider.SetPos(XMFLOAT2(x, y += step));
+	AddWidget(&vertexAORayCountSlider);
+
+	vertexAORayLengthSlider.Create(0, 1000, 100, 1000, "Ray length: ");
+	vertexAORayLengthSlider.SetTooltip("Set the ray length for vertex AO baking.\nSmaller ray length can reduce ambient occlusion from larger features.");
+	vertexAORayLengthSlider.SetSize(XMFLOAT2(wid, hei));
+	vertexAORayLengthSlider.SetPos(XMFLOAT2(x, y += step));
+	AddWidget(&vertexAORayLengthSlider);
+
 	y += step;
 
 	colorComboBox.Create("Color picker mode: ");
@@ -698,6 +939,20 @@ void ObjectWindow::SetEntity(Entity entity)
 	if (object == nullptr)
 		entity = INVALID_ENTITY;
 
+	if (object != nullptr)
+	{
+		if (object->vertex_ao.empty())
+		{
+			vertexAOButton.SetText("Compute Vertex AO");
+			deleteAOMode = false;
+		}
+		else
+		{
+			vertexAOButton.SetText("Delete Vertex AO");
+			deleteAOMode = true;
+		}
+	}
+
 	if (this->entity == entity)
 		return;
 
@@ -729,9 +984,11 @@ void ObjectWindow::SetEntity(Entity entity)
 		foregroundCheckBox.SetCheck(object->IsForeground());
 		notVisibleInMainCameraCheckBox.SetCheck(object->IsNotVisibleInMainCamera());
 		notVisibleInReflectionsCheckBox.SetCheck(object->IsNotVisibleInReflections());
+		wetmapCheckBox.SetCheck(object->IsWetmapEnabled());
 		navmeshCheckBox.SetCheck(object->filterMask & wi::enums::FILTER_NAVIGATION_MESH);
 		cascadeMaskSlider.SetValue((float)object->cascadeMask);
 		ditherSlider.SetValue(object->GetTransparency());
+		alphaRefSlider.SetValue(object->alphaRef);
 		lodSlider.SetValue(object->lod_distance_multiplier);
 		drawdistanceSlider.SetValue(object->draw_distance);
 		sortPrioritySlider.SetValue((int)object->sort_priority);
@@ -807,8 +1064,10 @@ void ObjectWindow::ResizeLayout()
 	add_right(foregroundCheckBox);
 	add_right(notVisibleInMainCameraCheckBox);
 	add_right(notVisibleInReflectionsCheckBox);
+	add_right(wetmapCheckBox);
 	add_right(navmeshCheckBox);
 	add(ditherSlider);
+	add(alphaRefSlider);
 	add(cascadeMaskSlider);
 	add(lodSlider);
 	add(drawdistanceSlider);
@@ -826,5 +1085,10 @@ void ObjectWindow::ResizeLayout()
 	add(generateLightmapButton);
 	add(stopLightmapGenButton);
 	add(clearLightmapButton);
+
+	y += jump;
+	add_fullwidth(vertexAOButton);
+	add(vertexAORayCountSlider);
+	add(vertexAORayLengthSlider);
 
 }

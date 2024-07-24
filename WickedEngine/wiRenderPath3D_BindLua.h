@@ -33,6 +33,7 @@ namespace wi::lua
 		int SetAO(lua_State* L);
 		int SetAOPower(lua_State* L);
 		int SetSSREnabled(lua_State* L);
+		int SetSSGIEnabled(lua_State* L);
 		int SetRaytracedDiffuseEnabled(lua_State* L);
 		int SetRaytracedReflectionsEnabled(lua_State* L);
 		int SetShadowsEnabled(lua_State* L);
@@ -69,6 +70,8 @@ namespace wi::lua
 		int SetCropTop(lua_State* L);
 		int SetCropRight(lua_State* L);
 		int SetCropBottom(lua_State* L);
+
+		int GetLastPostProcessRT(lua_State* L);
 
 		static void Bind();
 	};

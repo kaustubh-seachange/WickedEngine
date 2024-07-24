@@ -5,8 +5,8 @@ struct GSInput
 {
 	float4 pos : SV_POSITION;
 	float4 uvsets : UVSETS;
-	min16float4 color : COLOR;
-	min16float3 nor : NORMAL;
+	half4 color : COLOR;
+	float3 nor : NORMAL;
 };
 
 // Note: centroid interpolation is used to avoid floating voxels in some cases
@@ -14,8 +14,8 @@ struct GSOutput
 {
 	float4 pos : SV_POSITION;
 	centroid float4 uvsets : UVSETS;
-	centroid min16float4 color : COLOR;
-	centroid min16float3 N : NORMAL;
+	centroid half4 color : COLOR;
+	centroid float3 N : NORMAL;
 	centroid float3 P : POSITION3D;
 
 #ifdef VOXELIZATION_CONSERVATIVE_RASTERIZATION_ENABLED

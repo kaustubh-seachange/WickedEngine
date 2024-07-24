@@ -3,7 +3,7 @@
 #include "hairparticleHF.hlsli"
 #include "ShaderInterop_HairParticle.h"
 
-void main(VertexToPixel input) : SV_Target
+void main(VertexToPixel input)
 {
 	// Distance dithered fade:
 	clip(dither(input.pos.xy) - input.fade);
@@ -13,6 +13,6 @@ void main(VertexToPixel input) : SV_Target
 	[branch]
 	if (material.textures[BASECOLORMAP].IsValid())
 	{
-		clip(material.textures[BASECOLORMAP].Sample(sampler_linear_clamp, input.tex.xyxy).a - material.alphaTest);
+		clip(material.textures[BASECOLORMAP].Sample(sampler_linear_clamp, input.tex.xyxy).a - material.GetAlphaTest());
 	}
 }

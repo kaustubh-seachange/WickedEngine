@@ -4,24 +4,24 @@
 
 [![Github Build Status](https://github.com/turanszkij/WickedEngine/workflows/Build/badge.svg)](https://github.com/turanszkij/WickedEngine/actions)
 [![Discord chat](https://img.shields.io/discord/602811659224088577?logo=discord)](https://discord.gg/CFjRYmE)
+[![Forum](https://img.shields.io/badge/forum-join-blue)](https://wickedengine.net/forum/)
 <a href="https://twitter.com/intent/follow?screen_name=turanszkij"><img src="https://img.shields.io/twitter/follow/turanszkij.svg?style=social" alt="follow on Twitter"></a>
 <br/>
 [![Steam](https://img.shields.io/badge/-Steam-383838.svg?style=for-the-badge&logo=steam)](https://store.steampowered.com/app/1967460/Wicked_Engine/)
-[![Store](https://img.shields.io/badge/-Microsoft_Store-748FB2.svg?style=for-the-badge&logo=microsoft)](https://www.microsoft.com/store/productId/9PPMV065W9QJ)
 
 
 <br/>
 <img align="right" src="https://github.com/turanszkij/wickedengine-gifs/raw/main/videoprojectors.gif" width="320px"/>
 Wicked Engine is an open-source 3D engine with modern graphics. Use this as a C++ framework for your graphics projects, a standalone 3D editor, LUA scripting or just for learning.<br/>
-This project is hosted on <a href="https://github.com/turanszkij/WickedEngine/">GitHub</a>.
 
-- [Documentation](Content/Documentation/WickedEngine-Documentation.md)<br/>
-- [Scripting API Documentation](Content/Documentation/ScriptingAPI-Documentation.md)<br/>
+- [Website](https://wickedengine.net/)<br/>
+- [Forum](https://wickedengine.net/forum/)<br/>
 - [Features](features.txt)<br/>
-- [Devblog](https://wickedengine.net/)<br/>
 - [Videos](https://www.youtube.com/playlist?list=PLLN-1FTGyLU_HJoC5zx6hJkB3D2XLiaxS)<br/>
+- [C++ Documentation](Content/Documentation/WickedEngine-Documentation.md)<br/>
+- [Lua Documentation](Content/Documentation/ScriptingAPI-Documentation.md)<br/>
 
-You can get the full source code by using Git version control and cloning https://github.com/turanszkij/WickedEngine.git, or downloading it as zip. You can also download prebuilt and packaged version of the Editor here (requires Github sign in): [![Github Build Status](https://github.com/turanszkij/WickedEngine/workflows/Build/badge.svg)](https://github.com/turanszkij/WickedEngine/actions)
+You can get the full source code by using Git version control and cloning https://github.com/turanszkij/WickedEngine.git, or downloading it as zip. You can also download nightly packaged builds of the Editor here (requires Github sign in): [![Github Build Status](https://github.com/turanszkij/WickedEngine/workflows/Build/badge.svg)](https://github.com/turanszkij/WickedEngine/actions)
 <br/>
 <br/>
 
@@ -30,9 +30,8 @@ You can get the full source code by using Git version control and cloning https:
 ### Platforms:
 - Windows 10 or newer
 - Linux
-- UWP
 - Xbox Series X|S
-- PlayStation 5 [in progress]
+- PlayStation 5
 
 ### How to build: 
 
@@ -70,13 +69,6 @@ If you want to develop an application that uses Wicked Engine, you will have to 
 You can also download prebuilt and packaged versions of the Editor and Tests here (requires Github sign in): [![Github Build Status](https://github.com/turanszkij/WickedEngine/workflows/Build/badge.svg)](https://github.com/turanszkij/WickedEngine/actions)
 
 If you have questions or stuck, please use the `linux` communication channel on Discord: [![Discord chat](https://img.shields.io/discord/602811659224088577?logo=discord)](https://discord.gg/CFjRYmE)
-
-
-#### UWP
-To build for UWP platform, use the latest version of Visual Studio and the provided `WickedEngine.sln` solution file. The WickedEngine_UWP Project will build the engine for UWP platform as static library. The Template_UWP and Editor_UWP are two applications that will work on UWP platform that you can try. But first you must also build the binary shaders and embed them into the executable. To build and embed shaders, run the `OfflineShaderCompiler` projects with the `hlsl6 shaderdump` command line arguments. Then Rebuild the WickedEngine_UWP to create the engine with embedded shaders included. Now you can build an UWP application and run it on PC or Xbox.
-
- - To run the UWP application on **Xbox**, enable developer mode on your Xbox, and choose "Remote Machine" as a debugging target in Visual Studio. Enter the IP address of the Xbox into the Machine Name field of debugging project settings (make sure that you are modifying the debug settings for Remote Machine). The authentication mode should be set to "Universal (Unencrypted Protocol)" and upon launching the application from Visual Studio, you will need to enter the security PIN that you can view on the Xbox developer settings.<br/>
-**Note that to utilize the full performance of Xbox Series, it is required to build with the native Xbox SDK build tools instead of UWP**
 
 #### Xbox Series X|S
 To build for Xbox Series natively, download and install the Xbox SDK from your Xbox developer account. Using the latest version of Visual Studio, create a new static library project for the Xbox Series platform and reference the WickedEngine_SOURCE shared project. Xbox specific extension files required for building, or sample projects will be provided for registered Xbox developers on request.
@@ -203,17 +195,18 @@ The native model format is the <b>WISCENE</b> format. Any application using Wick
 
 <img align="right" src="https://github.com/turanszkij/wickedengine-gifs/raw/main/character_lookat.gif" width="320px"/>
 
-In addition, the Editor supports the importing of some common model formats (the list will potentially grow): 
+In addition, the Editor supports importing some common model formats: 
 - <b>OBJ</b>
 - <b>GLTF 2.0</b>
 - <b>VRM</b>
+- <b>FBX</b>
 
 The preferred workflow is to import models into the Editor, and save them as <b>WISCENE</b>, then any Wicked Engine application can open them.<br/>
 
 <img align="right" src="https://github.com/turanszkij/wickedengine-gifs/raw/main/snowstorm.gif" width="320px"/>
 
 ### Graphics API:
-The default renderer is `DirectX 12` on Windows and `Vulkan` on Linux. The `DirectX 11` renderer is no longer available starting from version 0.57.0, but it can be found on the <a href="https://github.com/turanszkij/WickedEngine/tree/dx11-backup">dx11-backup branch</a>.
+The default renderer is `DirectX 12` on Windows and `Vulkan` on Linux.
 You can specify command line arguments (without any prefix) to switch between render devices or other settings. Currently the list of options:
 <table>
   <tr>
@@ -221,16 +214,12 @@ You can specify command line arguments (without any prefix) to switch between re
 	<th>Description</th>
   </tr>
   <tr>
-	<td>dx12</td>
-	<td>Use DirectX 12 rendering device</td>
-  </tr>
-  <tr>
 	<td>vulkan</td>
-	<td>Use Vulkan rendering device</td>
+	<td>Use the Vulkan rendering device on Windows</td>
   </tr>
   <tr>
 	<td>debugdevice</td>
-	<td>Use debug layer for graphics API validation. Performance will be degraded, but graphics warnings and errors will be written to "Output" window</td>
+	<td>Use debug layer for graphics API validation. Performance will be degraded, but graphics warnings and errors will be written to the "Output" window</td>
   </tr>
   <tr>
 	<td>gpuvalidation</td>
@@ -266,13 +255,13 @@ You can specify command line arguments (without any prefix) to switch between re
 If you are having trouble getting the applications to run, make sure that you satisfy the following conditions:
 - If you built the application with Visual Studio, run it from the Visual Studio environment, where the executable working directory is set up to be the Project directory (not the build directory where the exe will be found)
 - If you want to run an application without Visual Studio, either copy the executable from the BUILD directory to the correct project directory, or set the working directory appropriately. You can also check the Working directory setting in Visual Studio to find out the right working directory of every project. 
-- If you want to build UWP application, then you will first need to build the shaders into a shader dump. For that, build and run the `offlineshadercompiler` project with the `hlsl6 shaderdump` command line arguments. If the `wiShaderDump.h` file is successfully generated, rebuilding the engine will embed all the shader files so they are not loaded separately. But embedded shaders also cannot be recompiled during runtime.
 
 <img align="right" src="https://github.com/turanszkij/wickedengine-gifs/raw/main/weather.gif" width="320px"/>
 
-- If you experience crashes, follow these steps to find out the problem:
+- If you experience crashes, you can try these to find out the problem:
 	- make sure your environment is up to date, with latest graphics drivers and operating system updates.
-	- see if there is a wiBackLog.txt in your user temp folder (for example: C:\Users\username\AppData\Local\Temp), and request help on Discord or Github issue
-	- build the engine in Debug mode and try to run it, see where it crashes, provide call stack on Discord or Github issue
+	- see if there is a wiBackLog.txt in your user temp folder (for example: C:\Users\username\AppData\Local\Temp)
+	- request help on the [Forum](https://wickedengine.net/forum/), [Discord](https://discord.gg/CFjRYmE) or [Github issue](https://github.com/turanszkij/WickedEngine/issues)
+	- build the engine in Debug mode and try to run it, see where it crashes
 	- run the engine with the `debugdevice` command argument and post the text from your console output window when the crash happens
 		- for very advanced users, using `gpuvalidation` with `debugdevice` will print additional graphics debug information

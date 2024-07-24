@@ -87,6 +87,8 @@ namespace wi::primitive
 		{
 			assert(radius >= 0);
 		}
+		bool intersects(const XMVECTOR& P) const;
+		bool intersects(const XMFLOAT3& P) const;
 		bool intersects(const AABB& b) const;
 		bool intersects(const Sphere& b) const;
 		bool intersects(const Sphere& b, float& dist) const;
@@ -235,6 +237,7 @@ namespace wi::primitive
 		Hitbox2D(const XMFLOAT2& newPos, const XMFLOAT2 newSiz) :pos(newPos), siz(newSiz) {}
 		~Hitbox2D() {};
 
+		bool intersects(const XMFLOAT2& b) const;
 		bool intersects(const Hitbox2D& b) const;
 	};
 

@@ -17,7 +17,9 @@ public:
 	wi::gui::CheckBox foregroundCheckBox;
 	wi::gui::CheckBox notVisibleInMainCameraCheckBox;
 	wi::gui::CheckBox notVisibleInReflectionsCheckBox;
+	wi::gui::CheckBox wetmapCheckBox;
 	wi::gui::Slider ditherSlider;
+	wi::gui::Slider alphaRefSlider;
 	wi::gui::Slider cascadeMaskSlider;
 	wi::gui::Slider lodSlider;
 	wi::gui::Slider drawdistanceSlider;
@@ -32,6 +34,11 @@ public:
 	wi::gui::Button generateLightmapButton;
 	wi::gui::Button stopLightmapGenButton;
 	wi::gui::Button clearLightmapButton;
+
+	wi::gui::Button vertexAOButton;
+	bool deleteAOMode = false;
+	wi::gui::Slider vertexAORayCountSlider;
+	wi::gui::Slider vertexAORayLengthSlider;
 
 	void ResizeLayout() override;
 };

@@ -72,8 +72,8 @@ namespace wi::graphics
 		// Create a SwapChain. If the SwapChain is to be recreated, the window handle can be nullptr.
 		virtual bool CreateSwapChain(const SwapChainDesc* desc, wi::platform::window_type window, SwapChain* swapchain) const = 0;
 		// Create a buffer with a callback to initialize its data. Note: don't read from callback's dest pointer, reads will be very slow! Use memcpy to write to it to make sure only writes happen!
-		virtual bool CreateBuffer2(const GPUBufferDesc* desc, const std::function<void(void* dest)>& init_callback, GPUBuffer* buffer) const = 0;
-		virtual bool CreateTexture(const TextureDesc* desc, const SubresourceData* initial_data, Texture* texture) const = 0;
+		virtual bool CreateBuffer2(const GPUBufferDesc* desc, const std::function<void(void* dest)>& init_callback, GPUBuffer* buffer, const GPUResource* alias = nullptr, uint64_t alias_offset = 0ull) const = 0;
+		virtual bool CreateTexture(const TextureDesc* desc, const SubresourceData* initial_data, Texture* texture, const GPUResource* alias = nullptr, uint64_t alias_offset = 0ull) const = 0;
 		virtual bool CreateShader(ShaderStage stage, const void* shadercode, size_t shadercode_size, Shader* shader) const = 0;
 		virtual bool CreateSampler(const SamplerDesc* desc, Sampler* sampler) const = 0;
 		virtual bool CreateQueryHeap(const GPUQueryHeapDesc* desc, GPUQueryHeap* queryheap) const = 0;
@@ -83,8 +83,10 @@ namespace wi::graphics
 		virtual bool CreateRaytracingPipelineState(const RaytracingPipelineStateDesc* desc, RaytracingPipelineState* rtpso) const { return false; }
 		virtual bool CreateVideoDecoder(const VideoDesc* desc, VideoDecoder* video_decoder) const { return false; };
 
-		virtual int CreateSubresource(Texture* texture, SubresourceType type, uint32_t firstSlice, uint32_t sliceCount, uint32_t firstMip, uint32_t mipCount, const Format* format_change = nullptr, const ImageAspect* aspect = nullptr, const Swizzle* swizzle = nullptr) const = 0;
+		virtual int CreateSubresource(Texture* texture, SubresourceType type, uint32_t firstSlice, uint32_t sliceCount, uint32_t firstMip, uint32_t mipCount, const Format* format_change = nullptr, const ImageAspect* aspect = nullptr, const Swizzle* swizzle = nullptr, float min_lod_clamp = 0) const = 0;
 		virtual int CreateSubresource(GPUBuffer* buffer, SubresourceType type, uint64_t offset, uint64_t size = ~0, const Format* format_change = nullptr, const uint32_t* structuredbuffer_stride_change = nullptr) const = 0;
+
+		virtual void DeleteSubresources(GPUResource* resource) = 0;
 
 		virtual int GetDescriptorIndex(const GPUResource* resource, SubresourceType type, int subresource = -1) const = 0;
 		virtual int GetDescriptorIndex(const Sampler* sampler) const = 0;
@@ -129,12 +131,14 @@ namespace wi::graphics
 		// Returns whether the graphics debug layer is enabled. It can be enabled when creating the device.
 		constexpr bool IsDebugDevice() const { return validationMode != ValidationMode::Disabled; }
 
+		// Get GPU-specific metrics:
 		constexpr size_t GetShaderIdentifierSize() const { return SHADER_IDENTIFIER_SIZE; }
 		constexpr size_t GetTopLevelAccelerationStructureInstanceSize() const { return TOPLEVEL_ACCELERATION_STRUCTURE_INSTANCE_SIZE; }
 		constexpr uint32_t GetVariableRateShadingTileSize() const { return VARIABLE_RATE_SHADING_TILE_SIZE; }
 		constexpr uint64_t GetTimestampFrequency() const { return TIMESTAMP_FREQUENCY; }
 		constexpr uint64_t GetVideoDecodeBitstreamAlignment() const { return VIDEO_DECODE_BITSTREAM_ALIGNMENT; }
 
+		// Get information about the graphics device manufacturer:
 		constexpr uint32_t GetVendorId() const { return vendorId; }
 		constexpr uint32_t GetDeviceId() const { return deviceId; }
 		constexpr const std::string& GetAdapterName() const { return adapterName; }
@@ -176,7 +180,13 @@ namespace wi::graphics
 		//	- These commands are not immediately executed, but they begin executing on the GPU after calling SubmitCommandLists()
 		//	- These are not thread safe, only a single thread should use a single CommandList at one time
 
+		// Tell the command list to wait for an other command list which was started before it
+		//	The granularity of this is at least that the beginning of the command list will wait for the end of the other command list
+		//	On some platform like PS5 this can be implemented by waiting exactly at the wait insertion point within the command lists which is more precise
 		virtual void WaitCommandList(CommandList cmd, CommandList wait_for) = 0;
+		// Tell the command list to wait for the specified queue to finish processing
+		//	It is useful when you want to wait for a previous frame, or just don't know which command list to wait for
+		virtual void WaitQueue(CommandList cmd, QUEUE_TYPE wait_for) = 0;
 		virtual void RenderPassBegin(const SwapChain* swapchain, CommandList cmd) = 0;
 		virtual void RenderPassBegin(const RenderPassImage* images, uint32_t image_count, CommandList cmd, RenderPassFlags flags = RenderPassFlags::NONE) = 0;
 		virtual void RenderPassEnd(CommandList cmd) = 0;
@@ -234,13 +244,13 @@ namespace wi::graphics
 
 		// Some useful helpers:
 
-		bool CreateBuffer(const GPUBufferDesc* desc, const void* initial_data, GPUBuffer* buffer) const
+		bool CreateBuffer(const GPUBufferDesc* desc, const void* initial_data, GPUBuffer* buffer, const GPUResource* alias = nullptr, uint64_t alias_offset = 0ull) const
 		{
 			if (initial_data == nullptr)
 			{
-				return CreateBuffer2(desc, nullptr, buffer);
+				return CreateBuffer2(desc, nullptr, buffer, alias, alias_offset);
 			}
-			return CreateBuffer2(desc, [&](void* dest) { std::memcpy(dest, initial_data, desc->size); }, buffer);
+			return CreateBuffer2(desc, [&](void* dest) { std::memcpy(dest, initial_data, desc->size); }, buffer, alias, alias_offset);
 		}
 
 		void Barrier(const GPUBarrier& barrier, CommandList cmd)

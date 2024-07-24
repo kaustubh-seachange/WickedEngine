@@ -54,7 +54,7 @@ float FFX_DNSR_Shadows_ReadPreviousDepth(int2 idx)
 }
 float3 FFX_DNSR_Shadows_ReadNormals(uint2 did)
 {
-	return normalize(normals[did] * 2 - 1);
+	return normalize(normals[did] - 0.5);
 }
 uint FFX_DNSR_Shadows_ReadRaytracedShadowMask(uint linear_tile_index)
 {
