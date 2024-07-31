@@ -940,6 +940,7 @@ namespace wi::scene
 		float restitution = 0.1f;
 		float damping_linear = 0.05f;
 		float damping_angular = 0.05f;
+		float buoyancy = 1.2f;
 		XMFLOAT3 local_offset = XMFLOAT3(0, 0, 0);
 
 		struct BoxParams
@@ -1995,6 +1996,100 @@ namespace wi::scene
 		XMFLOAT4 lookAtDeltaRotationState_LeftEye = XMFLOAT4(0, 0, 0, 1);
 		XMFLOAT4 lookAtDeltaRotationState_RightEye = XMFLOAT4(0, 0, 0, 1);
 		std::shared_ptr<void> ragdoll = nullptr; // physics system implementation-specific object
+
+		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
+	};
+
+	struct MetadataComponent
+	{
+		enum FLAGS
+		{
+			NONE = 0,
+		};
+		uint32_t _flags = NONE;
+
+		enum class Preset
+		{
+			Custom,
+			Waypoint,
+			Player,
+			Enemy,
+			NPC,
+			Pickup,
+		};
+		Preset preset = Preset::Custom;
+
+		// Ordered collection of values, but also accelerated lookup by string
+		template<typename T>
+		struct OrderedNamedValues
+		{
+			wi::unordered_map<std::string, size_t> lookup; // name -> value hash lookup
+			wi::vector<std::string> names; // ordered names
+			wi::vector<T> values; // ordered values
+
+			void reserve(size_t capacity)
+			{
+				lookup.reserve(capacity);
+				names.reserve(capacity);
+				values.reserve(capacity);
+			}
+			size_t size() const
+			{
+				return lookup.size();
+			}
+			bool has(const std::string& name) const
+			{
+				return lookup.count(name) > 0;
+			}
+			T get(size_t index) const
+			{
+				if (index < values.size())
+					return values[index];
+				return T();
+			}
+			T get_name(size_t index) const
+			{
+				if (index < names.size())
+					return names[index];
+				return T();
+			}
+			T get(const std::string& name) const
+			{
+				if (has(name))
+					return values[lookup.find(name)->second];
+				return T();
+			}
+			void set(const std::string& name, const T& value)
+			{
+				if (has(name))
+				{
+					// modify existing entry:
+					values[lookup[name]] = value;
+					names[lookup[name]] = name;
+				}
+				else
+				{
+					// register new entry:
+					lookup[name] = values.size();
+					values.push_back(value);
+					names.push_back(name);
+				}
+			}
+			void erase(const std::string& name)
+			{
+				if (has(name))
+				{
+					values.erase(values.begin() + lookup[name]);
+					names.erase(names.begin() + lookup[name]);
+					lookup.erase(name);
+				}
+			}
+		};
+
+		OrderedNamedValues<bool> bool_values;
+		OrderedNamedValues<int> int_values;
+		OrderedNamedValues<float> float_values;
+		OrderedNamedValues<std::string> string_values;
 
 		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
 	};

@@ -14,6 +14,18 @@
 #define LIGHTING_SCATTER
 #endif // WATER
 
+template<typename T>
+inline void QuadBlur(inout T value)
+{
+#if __SHADER_TARGET_STAGE == __SHADER_STAGE_PIXEL && defined(SHADOW_SAMPLING_DISK) && !defined(__spirv__) // Note: Vulkan is disabled because AMD doesn't handle it correctly
+// Average shadow within quad, this smooths out the dithering a bit:
+//	Note that I don't implement this in shadowHF.hlsli because we need to
+//	make sure that when averaging, all lanes in the quad are coherent
+//	It wouldn't be good if some waves are not sampling shadows or sampling different slices
+	value = (value + QuadReadAcrossX(value) + QuadReadAcrossY(value) + QuadReadAcrossDiagonal(value)) * 0.25;
+#endif // __SHADER_STAGE_PIXEL
+}
+
 struct LightingPart
 {
 	half3 diffuse;
@@ -50,100 +62,93 @@ inline void ApplyLighting(in Surface surface, in Lighting lighting, inout half4 
 inline void light_directional(in ShaderEntity light, in Surface surface, inout Lighting lighting, in half shadow_mask = 1)
 {
 	half3 L = light.GetDirection();
-
 	SurfaceToLight surface_to_light;
 	surface_to_light.create(surface, L);
+	
+	if (!any(surface_to_light.NdotL_sss))
+		return; // early exit: facing away from light
+		
+	half3 light_color = light.GetColor().rgb * shadow_mask;
 
 	[branch]
-	if (any(surface_to_light.NdotL_sss))
+	if (light.IsCastingShadow() && surface.IsReceiveShadow())
 	{
-		half3 shadow = shadow_mask;
-
-		[branch]
-		if (light.IsCastingShadow() && surface.IsReceiveShadow())
+		if (GetFrame().options & OPTION_BIT_VOLUMETRICCLOUDS_CAST_SHADOW)
 		{
-			if (GetFrame().options & OPTION_BIT_VOLUMETRICCLOUDS_CAST_SHADOW)
-			{
-				shadow *= shadow_2D_volumetricclouds(surface.P);
-			}
+			light_color *= shadow_2D_volumetricclouds(surface.P);
+		}
 
 #if defined(SHADOW_MASK_ENABLED) && !defined(TRANSPARENT)
-			[branch]
-			if ((GetFrame().options & OPTION_BIT_RAYTRACED_SHADOWS) == 0 || GetCamera().texture_rtshadow_index < 0 || (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) == 0)
+		[branch]
+		if ((GetFrame().options & OPTION_BIT_RAYTRACED_SHADOWS) == 0 || GetCamera().texture_rtshadow_index < 0 || (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) == 0)
 #endif // SHADOW_MASK_ENABLED
+		{
+			// Loop through cascades from closest (smallest) to furthest (largest)
+			[loop]
+			for (uint cascade = 0; cascade < light.GetShadowCascadeCount(); ++cascade)
 			{
-				// Loop through cascades from closest (smallest) to furthest (largest)
-				[loop]
-				for (uint cascade = 0; cascade < light.GetShadowCascadeCount(); ++cascade)
-				{
-					// Project into shadow map space (no need to divide by .w because ortho projection!):
-					const float4x4 cascade_projection = load_entitymatrix(light.GetMatrixIndex() + cascade);
-					const float3 shadow_pos = mul(cascade_projection, float4(surface.P, 1)).xyz;
-					const float3 shadow_uv = clipspace_to_uv(shadow_pos);
+				// Project into shadow map space (no need to divide by .w because ortho projection!):
+				const float4x4 cascade_projection = load_entitymatrix(light.GetMatrixIndex() + cascade);
+				const float3 shadow_pos = mul(cascade_projection, float4(surface.P, 1)).xyz;
+				const float3 shadow_uv = clipspace_to_uv(shadow_pos);
 
-					// Determine if pixel is inside current cascade bounds and compute shadow if it is:
+				// Determine if pixel is inside current cascade bounds and compute shadow if it is:
+				[branch]
+				if (is_saturated(shadow_uv))
+				{
+					const half2 cascade_edgefactor = saturate(saturate(abs(shadow_pos.xy)) - 0.8) * 5.0; // fade will be on edge and inwards 10%
+					const half cascade_fade = max(cascade_edgefactor.x, cascade_edgefactor.y);
+						
+					// If we are on cascade edge threshold and not the last cascade, then fallback to a larger cascade:
 					[branch]
-					if (is_saturated(shadow_uv))
-					{
-						const half2 cascade_edgefactor = saturate(saturate(abs(shadow_pos.xy)) - 0.8) * 5.0; // fade will be on edge and inwards 10%
-						const half cascade_fade = max(cascade_edgefactor.x, cascade_edgefactor.y);
+					if (cascade_fade > 0 && dither(surface.pixel + GetTemporalAASampleRotation()) < cascade_fade)
+						continue;
 						
-						// If we are on cascade edge threshold and not the last cascade, then fallback to a larger cascade:
-						[branch]
-						if (cascade_fade > 0 && dither(surface.pixel + GetTemporalAASampleRotation()) < cascade_fade)
-							continue;
-						
-						shadow *= shadow_2D(light, shadow_pos, shadow_uv.xy, cascade);
-						break;
-					}
+					light_color *= shadow_2D(light, shadow_pos, shadow_uv.xy, cascade, surface.pixel);
+					break;
 				}
 			}
 		}
+		
+		QuadBlur(light_color);
+	}
 
-		[branch]
-		if (any(shadow))
-		{
-			half3 light_color = light.GetColor().rgb * shadow;
+	[branch]
+	if (GetFrame().options & OPTION_BIT_REALISTIC_SKY)
+	{
+		light_color *= GetAtmosphericLightTransmittance(GetWeather().atmosphere, surface.P, L, texture_transmittancelut);
+	}
 
-			[branch]
-			if (GetFrame().options & OPTION_BIT_REALISTIC_SKY)
-			{
-				light_color *= GetAtmosphericLightTransmittance(GetWeather().atmosphere, surface.P, L, texture_transmittancelut);
-			}
-
-			lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
-			lighting.direct.specular = mad(light_color, BRDF_GetSpecular(surface, surface_to_light), lighting.direct.specular);
+	lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
+	lighting.direct.specular = mad(light_color, BRDF_GetSpecular(surface, surface_to_light), lighting.direct.specular);
 
 #ifdef LIGHTING_SCATTER
-			const half scattering = ComputeScattering(saturate(dot(L, -surface.V)));
-			lighting.indirect.specular += scattering * light_color * (1 - surface.extinction) * (1 - sqr(1 - saturate(1 - surface.N.y)));
+	const half scattering = ComputeScattering(saturate(dot(L, -surface.V)));
+	lighting.indirect.specular += scattering * light_color * (1 - surface.extinction) * (1 - sqr(1 - saturate(1 - surface.N.y)));
 #endif // LIGHTING_SCATTER
 			
 #ifndef WATER
-			// On non-water surfaces there can be procedural caustic if it's under ocean:
-			const ShaderOcean ocean = GetWeather().ocean;
-			if (ocean.texture_displacementmap >= 0)
-			{
-				Texture2D displacementmap = bindless_textures[ocean.texture_displacementmap];
-				float2 ocean_uv = surface.P.xz * ocean.patch_size_rcp;
-				float3 displacement = displacementmap.SampleLevel(sampler_linear_wrap, ocean_uv, 0).xzy;
-				float water_height = ocean.water_height + displacement.y;
-				if (surface.P.y < water_height)
-				{
-					half3 caustic = texture_caustics.SampleLevel(sampler_linear_mirror, ocean_uv, 0).rgb;
-					caustic *= sqr(saturate((water_height - surface.P.y) * 0.5)); // fade out at shoreline
-					caustic *= light_color;
-					lighting.indirect.diffuse += caustic;
+	// On non-water surfaces there can be procedural caustic if it's under ocean:
+	const ShaderOcean ocean = GetWeather().ocean;
+	if (ocean.texture_displacementmap >= 0)
+	{
+		Texture2D displacementmap = bindless_textures[ocean.texture_displacementmap];
+		float2 ocean_uv = surface.P.xz * ocean.patch_size_rcp;
+		float3 displacement = displacementmap.SampleLevel(sampler_linear_wrap, ocean_uv, 0).xzy;
+		float water_height = ocean.water_height + displacement.y;
+		if (surface.P.y < water_height)
+		{
+			half3 caustic = texture_caustics.SampleLevel(sampler_linear_mirror, ocean_uv, 0).rgb;
+			caustic *= sqr(saturate((water_height - surface.P.y) * 0.5)); // fade out at shoreline
+			caustic *= light_color;
+			lighting.indirect.diffuse += caustic;
 
-					// fade out specular at depth, it looks weird when specular appears under ocean from wetmap
-					half water_depth = water_height - surface.P.y;
-					lighting.direct.specular *= saturate(exp(-water_depth * 10));
-				}
-			}
-#endif // WATER
-
+			// fade out specular at depth, it looks weird when specular appears under ocean from wetmap
+			half water_depth = water_height - surface.P.y;
+			lighting.direct.specular *= saturate(exp(-water_depth * 10));
 		}
 	}
+#endif // WATER
 }
 
 inline half attenuation_pointlight(in half dist2, in half range, in half range2)
@@ -159,7 +164,7 @@ inline half attenuation_pointlight(in half dist2, in half range, in half range2)
 inline void light_point(in ShaderEntity light, in Surface surface, inout Lighting lighting, in half shadow_mask = 1)
 {
 	float3 Lunnormalized = light.position - surface.P;
-	float3 LunnormalizedShadow = Lunnormalized;
+	const float3 LunnormalizedShadow = Lunnormalized;
 
 #ifndef DISABLE_AREA_LIGHTS
 	if (light.GetLength() > 0)
@@ -177,83 +182,78 @@ inline void light_point(in ShaderEntity light, in Surface surface, inout Lightin
 	const half dist2 = dot(Lunnormalized, Lunnormalized);
 	const half range = light.GetRange();
 	const half range2 = range * range;
+	
+	if (dist2 > range2)
+		return; // early exit: outside range
+		
+	const half dist_rcp = rsqrt(dist2);
+	half3 L = Lunnormalized * dist_rcp;
+
+	SurfaceToLight surface_to_light;
+	surface_to_light.create(surface, L);
+		
+	if (!any(surface_to_light.NdotL_sss))
+		return; // early exit: facing away from light
+		
+	half3 light_color = light.GetColor().rgb * shadow_mask;
 
 	[branch]
-	if (dist2 < range2)
+	if (light.IsCastingShadow() && surface.IsReceiveShadow())
 	{
-		const half dist_rcp = rsqrt(dist2);
-		half3 L = Lunnormalized * dist_rcp;
-
-		SurfaceToLight surface_to_light;
-		surface_to_light.create(surface, L);
-
-		[branch]
-		if (any(surface_to_light.NdotL_sss))
-		{
-			half3 shadow = shadow_mask;
-
-			[branch]
-			if (light.IsCastingShadow() && surface.IsReceiveShadow())
-			{
 #if defined(SHADOW_MASK_ENABLED) && !defined(TRANSPARENT)
-				[branch]
-				if ((GetFrame().options & OPTION_BIT_RAYTRACED_SHADOWS) == 0 || GetCamera().texture_rtshadow_index < 0 || (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) == 0)
+		[branch]
+		if ((GetFrame().options & OPTION_BIT_RAYTRACED_SHADOWS) == 0 || GetCamera().texture_rtshadow_index < 0 || (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) == 0)
 #endif // SHADOW_MASK_ENABLED
-				{
-					shadow *= shadow_cube(light, LunnormalizedShadow);
-				}
-			}
+		{
+			light_color *= shadow_cube(light, LunnormalizedShadow, surface.pixel);
+		}
+		
+		QuadBlur(light_color);
+	}
 
-			[branch]
-			if (any(shadow))
-			{
-				half3 light_color = light.GetColor().rgb * shadow;
-				light_color *= attenuation_pointlight(dist2, range, range2);
+	light_color *= attenuation_pointlight(dist2, range, range2);
 
-				lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
+	lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
 
 #ifndef DISABLE_AREA_LIGHTS
-				if (light.GetLength() > 0)
-				{
-					// Specular representative point on line:
-					float3 P0 = light.position - light.GetDirection() * light.GetLength() * 0.5;
-					float3 P1 = light.position + light.GetDirection() * light.GetLength() * 0.5;
-					float3 L0 = P0 - surface.P;
-					float3 L1 = P1 - surface.P;
-					float3 Ld = L1 - L0;
-					float RdotLd = dot(surface.R, Ld);
-					float t = dot(surface.R, L0) * RdotLd - dot(L0, Ld);
-					t /= dot(Ld, Ld) - RdotLd * RdotLd;
-					Lunnormalized = (L0 + saturate(t) * Ld);
-				}
-				else
-				{
-					Lunnormalized = light.position - surface.P;
-				}
-				if(light.GetRadius() > 0)
-				{
-					// Specular representative point on sphere:
-					float3 centerToRay = mad(dot(Lunnormalized, surface.R), surface.R, -Lunnormalized);
-					Lunnormalized = mad(centerToRay, saturate(light.GetRadius() / length(centerToRay)), Lunnormalized);
-					// Energy conservation for radius:
-					light_color /= max(1, sphere_volume(light.GetRadius()));
-				}
-				if (light.GetLength() > 0 || light.GetRadius() > 0)
-				{
-					L = normalize(Lunnormalized);
-					surface_to_light.create(surface, L); // recompute all surface-light vectors
-				}
+	if (light.GetLength() > 0)
+	{
+		// Specular representative point on line:
+		float3 P0 = light.position - light.GetDirection() * light.GetLength() * 0.5;
+		float3 P1 = light.position + light.GetDirection() * light.GetLength() * 0.5;
+		float3 L0 = P0 - surface.P;
+		float3 L1 = P1 - surface.P;
+		float3 Ld = L1 - L0;
+		float RdotLd = dot(surface.R, Ld);
+		float t = dot(surface.R, L0) * RdotLd - dot(L0, Ld);
+		t /= dot(Ld, Ld) - RdotLd * RdotLd;
+		Lunnormalized = (L0 + saturate(t) * Ld);
+	}
+	else
+	{
+		Lunnormalized = light.position - surface.P;
+	}
+	if(light.GetRadius() > 0)
+	{
+		// Specular representative point on sphere:
+		float3 centerToRay = mad(dot(Lunnormalized, surface.R), surface.R, -Lunnormalized);
+		Lunnormalized = mad(centerToRay, saturate(light.GetRadius() / length(centerToRay)), Lunnormalized);
+		// Energy conservation for radius:
+		light_color /= max(1, sphere_volume(light.GetRadius()));
+	}
+	if (light.GetLength() > 0 || light.GetRadius() > 0)
+	{
+		L = normalize(Lunnormalized);
+		surface_to_light.create(surface, L); // recompute all surface-light vectors
+	}
 #endif // DISABLE_AREA_LIGHTS
 
-				lighting.direct.specular = mad(light_color, BRDF_GetSpecular(surface, surface_to_light), lighting.direct.specular);
+	lighting.direct.specular = mad(light_color, BRDF_GetSpecular(surface, surface_to_light), lighting.direct.specular);
 				
 #ifdef LIGHTING_SCATTER
-				const half scattering = ComputeScattering(saturate(dot(L, -surface.V)));
-				lighting.indirect.specular += scattering * light_color * (1 - surface.extinction) * (1 - sqr(1 - saturate(1 - surface.N.y)));
+	const half scattering = ComputeScattering(saturate(dot(L, -surface.V)));
+	lighting.indirect.specular += scattering * light_color * (1 - surface.extinction) * (1 - sqr(1 - saturate(1 - surface.N.y)));
 #endif // LIGHTING_SCATTER
-			}
-		}
-	}
 }
 
 inline half attenuation_spotlight(in half dist2, in half range, in half range2, in half spot_factor, in half angle_scale, in half angle_offset)
@@ -270,80 +270,73 @@ inline void light_spot(in ShaderEntity light, in Surface surface, inout Lighting
 	const half dist2 = dot(Lunnormalized, Lunnormalized);
 	const half range = light.GetRange();
 	const half range2 = range * range;
+	
+	if (dist2 > range2)
+		return; // early exit: outside range
+		
+	const half dist_rcp = rsqrt(dist2);
+	half3 L = Lunnormalized * dist_rcp;
+
+	SurfaceToLight surface_to_light;
+	surface_to_light.create(surface, L);
+		
+	if (!any(surface_to_light.NdotL_sss))
+		return; // early exit: facing away from light
+			
+	const half spot_factor = dot(L, light.GetDirection());
+	const half spot_cutoff = light.GetConeAngleCos();
+			
+	if (spot_factor < spot_cutoff)
+		return; // early exit: outside spotlight cone
+
+	half3 light_color = light.GetColor().rgb * shadow_mask;
 
 	[branch]
-	if (dist2 < range2)
+	if (light.IsCastingShadow() && surface.IsReceiveShadow())
 	{
-		const half dist_rcp = rsqrt(dist2);
-		half3 L = Lunnormalized * dist_rcp;
-
-		SurfaceToLight surface_to_light;
-		surface_to_light.create(surface, L);
-
-		[branch]
-		if (any(surface_to_light.NdotL_sss))
-		{
-			const half spot_factor = dot(L, light.GetDirection());
-			const half spot_cutoff = light.GetConeAngleCos();
-
-			[branch]
-			if (spot_factor > spot_cutoff)
-			{
-				half3 shadow = shadow_mask;
-
-				[branch]
-				if (light.IsCastingShadow() && surface.IsReceiveShadow())
-				{
 #if defined(SHADOW_MASK_ENABLED) && !defined(TRANSPARENT)
-					[branch]
-					if ((GetFrame().options & OPTION_BIT_RAYTRACED_SHADOWS) == 0 || GetCamera().texture_rtshadow_index < 0 || (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) == 0)
+		[branch]
+		if ((GetFrame().options & OPTION_BIT_RAYTRACED_SHADOWS) == 0 || GetCamera().texture_rtshadow_index < 0 || (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) == 0)
 #endif // SHADOW_MASK_ENABLED
-					{
-						float4 shadow_pos = mul(load_entitymatrix(light.GetMatrixIndex() + 0), float4(surface.P, 1));
-						shadow_pos.xyz /= shadow_pos.w;
-						float2 shadow_uv = clipspace_to_uv(shadow_pos.xy);
-						[branch]
-						if (is_saturated(shadow_uv))
-						{
-							shadow *= shadow_2D(light, shadow_pos.xyz, shadow_uv.xy, 0);
-						}
-					}
-				}
-
-				[branch]
-				if (any(shadow))
-				{
-					half3 light_color = light.GetColor().rgb * shadow;
-					light_color *= attenuation_spotlight(dist2, range, range2, spot_factor, light.GetAngleScale(), light.GetAngleOffset());
-
-					lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
-
-#ifndef DISABLE_AREA_LIGHTS
-					if (light.GetRadius() > 0)
-					{
-						// Specular representative point on sphere:
-						Lunnormalized = light.position - surface.P;
-						float3 centerToRay = mad(dot(Lunnormalized, surface.R), surface.R, -Lunnormalized);
-						Lunnormalized = mad(centerToRay, saturate(light.GetRadius() / length(centerToRay)), Lunnormalized);
-						L = normalize(Lunnormalized);
-						surface_to_light.create(surface, L); // recompute all surface-light vectors
-						// Energy conservation for radius:
-						light_color /= max(1, sphere_volume(light.GetRadius()));
-					}
-#endif // DISABLE_AREA_LIGHTS
-
-					lighting.direct.specular = mad(light_color, BRDF_GetSpecular(surface, surface_to_light), lighting.direct.specular);
-					
-#ifdef LIGHTING_SCATTER
-					const half scattering = ComputeScattering(saturate(dot(L, -surface.V)));
-					lighting.indirect.specular += scattering * light_color * (1 - surface.extinction) * (1 - sqr(1 - saturate(1 - surface.N.y)));
-#endif // LIGHTING_SCATTER
-				}
+		{
+			float4 shadow_pos = mul(load_entitymatrix(light.GetMatrixIndex() + 0), float4(surface.P, 1));
+			shadow_pos.xyz /= shadow_pos.w;
+			float2 shadow_uv = clipspace_to_uv(shadow_pos.xy);
+			[branch]
+			if (is_saturated(shadow_uv))
+			{
+				light_color *= shadow_2D(light, shadow_pos.xyz, shadow_uv.xy, 0, surface.pixel);
 			}
 		}
+		
+		QuadBlur(light_color);
 	}
-}
 
+	light_color *= attenuation_spotlight(dist2, range, range2, spot_factor, light.GetAngleScale(), light.GetAngleOffset());
+
+	lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
+
+#ifndef DISABLE_AREA_LIGHTS
+	if (light.GetRadius() > 0)
+	{
+		// Specular representative point on sphere:
+		Lunnormalized = light.position - surface.P;
+		float3 centerToRay = mad(dot(Lunnormalized, surface.R), surface.R, -Lunnormalized);
+		Lunnormalized = mad(centerToRay, saturate(light.GetRadius() / length(centerToRay)), Lunnormalized);
+		L = normalize(Lunnormalized);
+		surface_to_light.create(surface, L); // recompute all surface-light vectors
+		// Energy conservation for radius:
+		light_color /= max(1, sphere_volume(light.GetRadius()));
+	}
+#endif // DISABLE_AREA_LIGHTS
+
+	lighting.direct.specular = mad(light_color, BRDF_GetSpecular(surface, surface_to_light), lighting.direct.specular);
+					
+#ifdef LIGHTING_SCATTER
+	const half scattering = ComputeScattering(saturate(dot(L, -surface.V)));
+	lighting.indirect.specular += scattering * light_color * (1 - surface.extinction) * (1 - sqr(1 - saturate(1 - surface.N.y)));
+#endif // LIGHTING_SCATTER
+}
 
 // ENVIRONMENT MAPS
 

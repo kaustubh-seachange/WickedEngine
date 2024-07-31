@@ -1191,6 +1191,8 @@ namespace wi::scene
 					tmp.Component_Attach(entity, rootEntity);
 				}
 			}
+
+			tmp.RunHierarchyUpdateSystem(seri.ctx);
 		}
 
 		wi::jobsystem::Wait(seri.ctx); // wait for completion of component serializations background threads here
@@ -5331,7 +5333,7 @@ namespace wi::scene
 
 		return result;
 	}
-	bool Scene::IntersectsFirst(const wi::primitive::Ray& ray, uint32_t filterMask, uint32_t layerMask, uint32_t lod) const
+	bool Scene::IntersectsFirst(const Ray& ray, uint32_t filterMask, uint32_t layerMask, uint32_t lod) const
 	{
 		bool result = false;
 

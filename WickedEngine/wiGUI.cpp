@@ -786,7 +786,7 @@ namespace wi::gui
 		OnDragStart([](EventArgs args) {});
 		OnDrag([](EventArgs args) {});
 		OnDragEnd([](EventArgs args) {});
-		SetSize(XMFLOAT2(100, 30));
+		SetSize(XMFLOAT2(100, 20));
 
 		font.params.h_align = wi::font::WIFALIGN_CENTER;
 		font.params.v_align = wi::font::WIFALIGN_CENTER;
@@ -1406,7 +1406,7 @@ namespace wi::gui
 		SetName(name);
 		SetText(name);
 		OnInputAccepted([](EventArgs args) {});
-		SetSize(XMFLOAT2(100, 30));
+		SetSize(XMFLOAT2(100, 20));
 
 		font.params.v_align = wi::font::WIFALIGN_CENTER;
 
@@ -1467,7 +1467,6 @@ namespace wi::gui
 			if (state == DEACTIVATING)
 			{
 				state = IDLE;
-				typing_active = false;
 			}
 
 			// hover the button
@@ -1501,8 +1500,8 @@ namespace wi::gui
 						args.fValue = (float)atof(args.sValue.c_str());
 						onInputAccepted(args);
 					}
-
 					Deactivate();
+					typing_active = false;
 				}
 				//else if (wi::input::Press(wi::input::KEYBOARD_BUTTON_BACKSPACE))
 				//{
@@ -1539,6 +1538,7 @@ namespace wi::gui
 					// cancel input
 					font_input.text.clear();
 					Deactivate();
+					typing_active = false;
 				}
 				else if (wi::input::Down(wi::input::MOUSE_BUTTON_LEFT))
 				{
@@ -4879,7 +4879,7 @@ namespace wi::gui
 
 			float vscale = scale.y;
 			Hitbox2D bottomhitbox = Hitbox2D(XMFLOAT2(translation.x, translation.y + vscale), XMFLOAT2(scale.x, resizehitboxwidth));
-			
+
 			if (resize_state == RESIZE_STATE_NONE && wi::input::Press(wi::input::MOUSE_BUTTON_LEFT))
 			{
 				if (pointerHitbox.intersects(bottomhitbox))
@@ -5131,7 +5131,7 @@ namespace wi::gui
 			// hitboxes are recomputed because window transform might have changed since update!!
 			float vscale = scale.y;
 			Hitbox2D bottomhitbox = Hitbox2D(XMFLOAT2(translation.x, translation.y + vscale), XMFLOAT2(scale.x, resizehitboxwidth));
-			
+
 			const Hitbox2D pointerHitbox = GetPointerHitbox(false);
 
 			wi::image::Params fx = sprites[state].params;
